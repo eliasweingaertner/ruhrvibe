@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::params::{FilterParams, OscParams, SynthParams};
 use crate::voice::{
-    EnvelopeVoiceParams, FilterVoiceParams, OscVoiceParams, PitchEnvVoiceParams,
-    Voice, VoiceParams,
+    EnvelopeVoiceParams, FilterVoiceParams, OscBankPrecomp, OscVoiceParams,
+    PitchEnvVoiceParams, Voice, VoiceParams,
 };
 
 /// Maximum number of polyphonic voices (pre-allocated pool).
@@ -213,9 +213,15 @@ impl Plugin for SubtractiveSynth {
             }
 
             // Sample all smoothed parameters once this sample.
+            let osc1 = Self::osc_voice_params(&self.params.osc1);
+            let osc2 = Self::osc_voice_params(&self.params.osc2);
+            let osc1_pre = OscBankPrecomp::compute(&osc1);
+            let osc2_pre = OscBankPrecomp::compute(&osc2);
             let voice_params = VoiceParams {
-                osc1: Self::osc_voice_params(&self.params.osc1),
-                osc2: Self::osc_voice_params(&self.params.osc2),
+                osc1,
+                osc2,
+                osc1_pre,
+                osc2_pre,
                 filter1: Self::filter_voice_params(&self.params.filter1),
                 filter2: Self::filter_voice_params(&self.params.filter2),
                 amp_env: Self::env_voice_params(&self.params.amp_env),
