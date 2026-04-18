@@ -22,6 +22,8 @@ pub struct OscPreset {
     pub enabled: bool,
     pub unison_voices: i32,
     pub unison_spread: f32,
+    pub pan: f32,
+    pub stereo_spread: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -71,7 +73,16 @@ pub struct Preset {
 // -----------------------------------------------------------------------
 
 const fn o(w: Waveform, lv: f32, det: f32, oct: i32, en: bool, uni: i32, sp: f32) -> OscPreset {
-    OscPreset { waveform: w, level: lv, detune: det, octave: oct, enabled: en, unison_voices: uni, unison_spread: sp }
+    // Default stereo: center, 50% unison spread (only audible when unison > 1).
+    OscPreset { waveform: w, level: lv, detune: det, octave: oct, enabled: en,
+                unison_voices: uni, unison_spread: sp, pan: 0.0, stereo_spread: 0.5 }
+}
+/// Oscillator preset with explicit pan and stereo spread.
+#[allow(dead_code)]
+const fn op(w: Waveform, lv: f32, det: f32, oct: i32, en: bool, uni: i32, sp: f32,
+            pan: f32, st: f32) -> OscPreset {
+    OscPreset { waveform: w, level: lv, detune: det, octave: oct, enabled: en,
+                unison_voices: uni, unison_spread: sp, pan, stereo_spread: st }
 }
 const fn f(ft: FilterType, cut: f32, res: f32, drv: f32, ea: f32, en: bool) -> FilterPreset {
     FilterPreset { filter_type: ft, cutoff: cut, resonance: res, drive: drv, env_amount: ea, enabled: en }
@@ -1634,6 +1645,8 @@ fn apply_osc(src: &OscPreset, dst: &crate::params::OscParams, ctx: &dyn GuiConte
     set_bool(ctx, &dst.enabled, src.enabled);
     set_int(ctx, &dst.unison_voices, src.unison_voices);
     set_float(ctx, &dst.unison_spread, src.unison_spread);
+    set_float(ctx, &dst.pan, src.pan);
+    set_float(ctx, &dst.stereo_spread, src.stereo_spread);
 }
 
 fn apply_filter(src: &FilterPreset, dst: &crate::params::FilterParams, ctx: &dyn GuiContext) {

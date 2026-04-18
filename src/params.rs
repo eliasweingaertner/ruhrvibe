@@ -67,6 +67,12 @@ pub struct OscParams {
 
     #[id = "unisp"]
     pub unison_spread: FloatParam,
+
+    #[id = "pan"]
+    pub pan: FloatParam,
+
+    #[id = "stspr"]
+    pub stereo_spread: FloatParam,
 }
 
 impl OscParams {
@@ -107,6 +113,22 @@ impl OscParams {
             .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" ct")
             .with_step_size(0.1),
+            pan: FloatParam::new(
+                "Pan",
+                0.0,
+                FloatRange::Linear { min: -1.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_panning())
+            .with_string_to_value(formatters::s2v_f32_panning()),
+            stereo_spread: FloatParam::new(
+                "Stereo",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
         }
     }
 }

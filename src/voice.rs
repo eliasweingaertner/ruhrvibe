@@ -25,6 +25,8 @@ pub struct OscVoiceParams {
     pub enabled: bool,
     pub unison_voices: i32,
     pub unison_spread: f32,
+    pub pan: f32,
+    pub stereo_spread: f32,
 }
 
 /// Pre-computed per-sample parameter values for a single filter slot.
@@ -75,8 +77,12 @@ pub struct Voice {
     pub velocity: f32,
     osc1: [Oscillator; MAX_UNISON],
     osc2: [Oscillator; MAX_UNISON],
-    filter1: SvfFilter,
-    filter2: SvfFilter,
+    // Stereo filter pair per slot — each channel has its own state so
+    // stereo content survives the filter.
+    filter1_l: SvfFilter,
+    filter1_r: SvfFilter,
+    filter2_l: SvfFilter,
+    filter2_r: SvfFilter,
     amp_env: Envelope,
     filter1_env: Envelope,
     filter2_env: Envelope,
@@ -96,8 +102,10 @@ impl Voice {
             velocity: 0.0,
             osc1,
             osc2,
-            filter1: SvfFilter::new(sample_rate),
-            filter2: SvfFilter::new(sample_rate),
+            filter1_l: SvfFilter::new(sample_rate),
+            filter1_r: SvfFilter::new(sample_rate),
+            filter2_l: SvfFilter::new(sample_rate),
+            filter2_r: SvfFilter::new(sample_rate),
             amp_env: Envelope::new(sample_rate),
             filter1_env: Envelope::new(sample_rate),
             filter2_env: Envelope::new(sample_rate),
@@ -108,8 +116,10 @@ impl Voice {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         for o in &mut self.osc1 { o.set_sample_rate(sample_rate); }
         for o in &mut self.osc2 { o.set_sample_rate(sample_rate); }
-        self.filter1.set_sample_rate(sample_rate);
-        self.filter2.set_sample_rate(sample_rate);
+        self.filter1_l.set_sample_rate(sample_rate);
+        self.filter1_r.set_sample_rate(sample_rate);
+        self.filter2_l.set_sample_rate(sample_rate);
+        self.filter2_r.set_sample_rate(sample_rate);
         self.amp_env.set_sample_rate(sample_rate);
         self.filter1_env.set_sample_rate(sample_rate);
         self.filter2_env.set_sample_rate(sample_rate);
@@ -121,8 +131,10 @@ impl Voice {
         self.velocity = velocity;
         for o in &mut self.osc1 { o.reset(); }
         for o in &mut self.osc2 { o.reset(); }
-        self.filter1.reset();
-        self.filter2.reset();
+        self.filter1_l.reset();
+        self.filter1_r.reset();
+        self.filter2_l.reset();
+        self.filter2_r.reset();
         self.amp_env.trigger();
         self.filter1_env.trigger();
         self.filter2_env.trigger();
@@ -149,19 +161,21 @@ impl Voice {
     pub fn reset(&mut self) {
         for o in &mut self.osc1 { o.reset(); }
         for o in &mut self.osc2 { o.reset(); }
-        self.filter1.reset();
-        self.filter2.reset();
+        self.filter1_l.reset();
+        self.filter1_r.reset();
+        self.filter2_l.reset();
+        self.filter2_r.reset();
         self.amp_env.reset();
         self.filter1_env.reset();
         self.filter2_env.reset();
         self.pitch_env.reset();
     }
 
-    /// Process a single sample and return the voice output (mono).
+    /// Process a single sample and return the voice output (L, R).
     #[inline]
-    pub fn process(&mut self, params: &VoiceParams) -> f32 {
+    pub fn process(&mut self, params: &VoiceParams) -> (f32, f32) {
         if !self.is_active() {
-            return 0.0;
+            return (0.0, 0.0);
         }
 
         // Advance envelopes.
@@ -194,32 +208,34 @@ impl Voice {
         let pitch_offset_semitones = pitch_env_val * params.pitch_env.amount;
         let base_freq = midi_note_to_freq(self.note as f32 + pitch_offset_semitones);
 
-        // Oscillator 1 (unison)
-        let mut mix = 0.0;
+        // Oscillator 1 + 2, each produces (L, R).
+        let (mut mix_l, mut mix_r) = (0.0f32, 0.0f32);
         if params.osc1.enabled {
-            mix += Self::process_osc_bank(
-                &mut self.osc1,
-                base_freq,
-                &params.osc1,
-            );
+            let (l, r) = Self::process_osc_bank(&mut self.osc1, base_freq, &params.osc1);
+            mix_l += l;
+            mix_r += r;
         }
-
-        // Oscillator 2 (unison)
         if params.osc2.enabled {
-            mix += Self::process_osc_bank(
-                &mut self.osc2,
-                base_freq,
-                &params.osc2,
-            );
+            let (l, r) = Self::process_osc_bank(&mut self.osc2, base_freq, &params.osc2);
+            mix_l += l;
+            mix_r += r;
         }
 
-        // Filter 1 (if enabled)
-        let mut signal = mix;
+        // Filter 1 (per-channel). SVF is linear, but we keep separate state
+        // so stereo content survives the filter (phase/resonance behavior).
+        let (mut sig_l, mut sig_r) = (mix_l, mix_r);
         if params.filter1.enabled {
             let modulated_cutoff = params.filter1.cutoff
                 * exp2_fast(f1_env * params.filter1.env_amount * 4.0);
-            signal = self.filter1.process(
-                signal,
+            sig_l = self.filter1_l.process(
+                sig_l,
+                modulated_cutoff,
+                params.filter1.resonance,
+                params.filter1.drive,
+                params.filter1.filter_type,
+            );
+            sig_r = self.filter1_r.process(
+                sig_r,
                 modulated_cutoff,
                 params.filter1.resonance,
                 params.filter1.drive,
@@ -227,12 +243,19 @@ impl Voice {
             );
         }
 
-        // Filter 2 (if enabled)
+        // Filter 2 (per-channel).
         if params.filter2.enabled {
             let modulated_cutoff = params.filter2.cutoff
                 * exp2_fast(f2_env * params.filter2.env_amount * 4.0);
-            signal = self.filter2.process(
-                signal,
+            sig_l = self.filter2_l.process(
+                sig_l,
+                modulated_cutoff,
+                params.filter2.resonance,
+                params.filter2.drive,
+                params.filter2.filter_type,
+            );
+            sig_r = self.filter2_r.process(
+                sig_r,
                 modulated_cutoff,
                 params.filter2.resonance,
                 params.filter2.drive,
@@ -240,41 +263,62 @@ impl Voice {
             );
         }
 
-        // Amplitude envelope and velocity scaling.
-        signal * amp * self.velocity
+        let gain = amp * self.velocity;
+        (sig_l * gain, sig_r * gain)
     }
 
-    /// Process an oscillator bank with unison detuning.
+    /// Process an oscillator bank with unison detuning. Returns (L, R) with
+    /// unison voices spread across the stereo field and the bank's pan applied.
     #[inline]
     fn process_osc_bank(
         oscs: &mut [Oscillator; MAX_UNISON],
         base_freq: f32,
         p: &OscVoiceParams,
-    ) -> f32 {
+    ) -> (f32, f32) {
         let n = (p.unison_voices as usize).clamp(1, MAX_UNISON);
 
-        // Compute center frequency: base * 2^octave * 2^(detune_cents/1200).
-        // Combine octave + detune into one exp2 call.
         let center_freq = base_freq
             * exp2_fast(p.octave as f32 + p.detune_cents * (1.0 / 1200.0));
 
+        // Pan laws: normalized so pan=0 gives (1.0, 1.0) to match the old
+        // mono behavior (mono signal copied to both channels at full level).
+        let (pan_l, pan_r) = center_unity_pan(p.pan);
+
         if n == 1 {
             oscs[0].set_frequency(center_freq);
-            return oscs[0].next_sample(p.waveform) * p.level;
+            let s = oscs[0].next_sample(p.waveform) * p.level;
+            return (s * pan_l, s * pan_r);
         }
 
-        // Spread unison voices symmetrically around center_freq.
-        // Pre-compute the spread factor: spread_cents / 1200.
         let spread_factor = p.unison_spread * (1.0 / 1200.0);
         let inv_n_minus_1 = 1.0 / (n - 1) as f32;
-        let mut sum = 0.0f32;
+        let norm = p.level * INV_SQRT[n];
+
+        let mut sum_l = 0.0f32;
+        let mut sum_r = 0.0f32;
         for i in 0..n {
             let t = (i as f32 * inv_n_minus_1) * 2.0 - 1.0;
             let freq = center_freq * exp2_fast(spread_factor * t);
             oscs[i].set_frequency(freq);
-            sum += oscs[i].next_sample(p.waveform);
+            let s = oscs[i].next_sample(p.waveform) * norm;
+
+            // Spread each unison voice across the stereo field according to
+            // its position. stereo_spread=0 → mono; 1 → hard left-to-right.
+            let voice_pan = (t * p.stereo_spread).clamp(-1.0, 1.0);
+            let (vl, vr) = center_unity_pan(voice_pan);
+            sum_l += s * vl;
+            sum_r += s * vr;
         }
-        // Use precomputed 1/sqrt(n) lookup instead of runtime sqrt.
-        sum * p.level * INV_SQRT[n]
+        // Apply the bank's overall pan on top of the unison panning.
+        (sum_l * pan_l, sum_r * pan_r)
     }
+}
+
+/// Constant-power pan law, normalized so pan=0 returns (1.0, 1.0).
+/// pan=-1 → (sqrt(2), 0), pan=1 → (0, sqrt(2)).
+#[inline]
+fn center_unity_pan(pan: f32) -> (f32, f32) {
+    let theta = (pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
+    (theta.cos() * std::f32::consts::SQRT_2,
+     theta.sin() * std::f32::consts::SQRT_2)
 }

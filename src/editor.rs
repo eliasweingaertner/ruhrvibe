@@ -17,7 +17,7 @@ const WAVEFORM_LABELS: &[&str] = &["Sine", "Saw", "Squ", "Tri", "Noise"];
 const FILTER_TYPE_LABELS: &[&str] = &["LP", "HP", "BP", "Notch"];
 
 const BASE_WIDTH: u32 = 820;
-const BASE_HEIGHT: u32 = 760;
+const BASE_HEIGHT: u32 = 820;
 
 // Direct overrides of nih_plug_vizia's built-in widget stylesheet. These are
 // simple-type selectors so they override the defaults with equal specificity
@@ -519,6 +519,18 @@ fn osc_section(cx: &mut Context, title: &str, accent: &'static str, sel: OscSel)
             match sel {
                 OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.unison_spread); }
                 OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.unison_spread); }
+            }
+        });
+        labeled_row(cx, "Pan", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.pan); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.pan); }
+            }
+        });
+        labeled_row(cx, "Stereo", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.stereo_spread); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.stereo_spread); }
             }
         });
     });

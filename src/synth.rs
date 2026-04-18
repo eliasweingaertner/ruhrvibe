@@ -71,6 +71,8 @@ impl SubtractiveSynth {
             enabled: params.enabled.value(),
             unison_voices: params.unison_voices.value(),
             unison_spread: params.unison_spread.smoothed.next(),
+            pan: params.pan.smoothed.next(),
+            stereo_spread: params.stereo_spread.smoothed.next(),
         }
     }
 
@@ -223,16 +225,20 @@ impl Plugin for SubtractiveSynth {
             };
             let master_gain = self.params.master_gain.smoothed.next();
 
-            // Sum all active voices.
-            let mut mix = 0.0f32;
+            // Sum all active voices into a stereo bus.
+            let mut mix_l = 0.0f32;
+            let mut mix_r = 0.0f32;
             let mut found_active = false;
             for voice in self.voices.iter_mut().take(max_voices) {
                 if voice.is_active() {
-                    mix += voice.process(&voice_params);
+                    let (l, r) = voice.process(&voice_params);
+                    mix_l += l;
+                    mix_r += r;
                     found_active = true;
                 }
             }
-            mix *= master_gain;
+            mix_l *= master_gain;
+            mix_r *= master_gain;
 
             // If no voices were actually active this sample, mark for fast
             // path on subsequent samples (until next MIDI event).
@@ -240,8 +246,8 @@ impl Plugin for SubtractiveSynth {
                 any_active = false;
             }
 
-            for sample in channel_samples {
-                *sample = mix;
+            for (ch, sample) in channel_samples.into_iter().enumerate() {
+                *sample = if ch == 0 { mix_l } else { mix_r };
             }
         }
 
