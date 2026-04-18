@@ -7,7 +7,7 @@
 //! - 2-slot series filter chain per voice (LP/HP/BP/Notch)
 //! - Amp envelope + 2 filter envelopes + pitch envelope
 //! - Configurable polyphony (1-32 voices) with voice stealing
-//! - Iced-based GUI with factory presets (melodic + drums)
+//! - Vizia-based GUI with factory presets (melodic + drums)
 
 mod envelope;
 mod editor;

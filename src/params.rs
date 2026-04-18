@@ -4,7 +4,7 @@
 //! structs for organization: oscillators, filters, envelopes, master.
 
 use nih_plug::prelude::*;
-use nih_plug_iced::IcedState;
+use nih_plug_vizia::ViziaState;
 use std::sync::Arc;
 
 /// Oscillator waveform selection.
@@ -337,7 +337,7 @@ impl PitchEnvParams {
 pub struct SynthParams {
     /// GUI window state — persisted across sessions.
     #[persist = "editor-state"]
-    pub editor_state: Arc<IcedState>,
+    pub editor_state: Arc<ViziaState>,
 
     #[nested(id_prefix = "osc1", group = "Oscillator 1")]
     pub osc1: Arc<OscParams>,

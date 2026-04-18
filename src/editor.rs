@@ -1,649 +1,683 @@
-//! Iced-based GUI editor for the subtractive synth.
+//! Vizia-based GUI editor for the subtractive synth.
 //!
-//! HiDPI strategy: rather than rely on baseview/iced scale policies
-//! (which are inconsistent across VST3 hosts), we query the system DPI
-//! ourselves at editor creation time and scale *both* the reported
-//! window size *and* every widget dimension by that factor. The plugin
-//! runs Iced at an effective 1x scale — all dimensions are already in
-//! physical pixels.
+//! Vizia handles HiDPI natively: sizes are in logical pixels and the
+//! framework scales based on host/system DPI.
 
-use nih_plug::prelude::*;
-use nih_plug_iced::widgets as nih_widgets;
-use nih_plug_iced::*;
-use std::sync::atomic::{AtomicU32, Ordering};
+use nih_plug::prelude::{Editor, GuiContext, Param};
+use nih_plug_vizia::vizia::prelude::*;
+use nih_plug_vizia::widgets::param_base::ParamWidgetBase;
+use nih_plug_vizia::widgets::*;
+use nih_plug_vizia::{assets, create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
 
 use crate::params::SynthParams;
-use crate::presets::{apply_preset, FACTORY_PRESETS};
+use crate::presets::{apply_preset, presets_in_category, CATEGORIES, FACTORY_PRESETS};
 
-/// Base (logical @96dpi) window size.
-const BASE_WIDTH: u32 = 920;
-const BASE_HEIGHT: u32 = 780;
+const WAVEFORM_LABELS: &[&str] = &["Sine", "Saw", "Squ", "Tri", "Noise"];
+const FILTER_TYPE_LABELS: &[&str] = &["LP", "HP", "BP", "Notch"];
 
-/// Cached DPI scale factor × 1000 (to fit in an atomic int).
-/// Queried once on the first call to `dpi_scale()`.
-static DPI_SCALE_MILLI: AtomicU32 = AtomicU32::new(0);
+const BASE_WIDTH: u32 = 820;
+const BASE_HEIGHT: u32 = 760;
 
-/// Query (and cache) the system DPI scale factor.
-fn dpi_scale() -> f32 {
-    let cached = DPI_SCALE_MILLI.load(Ordering::Relaxed);
-    if cached != 0 {
-        return cached as f32 / 1000.0;
+// Direct overrides of nih_plug_vizia's built-in widget stylesheet. These are
+// simple-type selectors so they override the defaults with equal specificity
+// (our stylesheet is added after widgets::register_theme).
+const STYLE: &str = r#"
+/* Global defaults so the custom theme background applies everywhere */
+:root {
+    background-color: #23262E;
+    color: #E8EAF0;
+    font-size: 12;
+}
+
+/* Shrink nih_plug_vizia defaults so they fit our compact layout */
+param-slider {
+    width: 1s;
+    height: 22px;
+    border-color: #1A1C22;
+    border-width: 1px;
+    background-color: #1E2028;
+}
+param-slider:hover,
+param-slider:active {
+    background-color: #2A2D36;
+}
+param-slider .fill {
+    background-color: #F0A526;
+}
+param-slider .value-entry {
+    color: #E8EAF0;
+    font-size: 12;
+    background-color: transparent;
+    border-width: 0px;
+    child-space: 1s;
+}
+
+/* Root panel */
+.root {
+    background-color: #23262E;
+    child-space: 8px;
+    row-between: 6px;
+    width: 1s;
+    height: 1s;
+}
+
+/* Header row */
+.header {
+    height: 28px;
+    col-between: 6px;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+.header-title {
+    color: #F0A526;
+    font-size: 18;
+    width: auto;
+    height: auto;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+
+/* Section box */
+.section {
+    background-color: #2C3038;
+    border-radius: 6px;
+    border-width: 1.5px;
+    border-color: #3A4050;
+    child-space: 6px;
+    row-between: 2px;
+    height: auto;
+    width: 1s;
+}
+.section-title {
+    font-size: 13;
+    width: 1s;
+    height: 16px;
+    child-bottom: 2px;
+}
+
+/* Accent colors for the section title + border */
+.accent-osc1 { border-color: #D8961F; }
+.accent-osc1 .section-title { color: #F0A526; }
+.accent-osc2 { border-color: #B57918; }
+.accent-osc2 .section-title { color: #D8901B; }
+.accent-flt1 { border-color: #40648C; }
+.accent-flt1 .section-title { color: #5887B0; }
+.accent-flt2 { border-color: #587F9F; }
+.accent-flt2 .section-title { color: #7298B8; }
+.accent-amp  { border-color: #D0842B; }
+.accent-amp  .section-title { color: #F09428; }
+.accent-fe1  { border-color: #4D7293; }
+.accent-fe1  .section-title { color: #6890B0; }
+.accent-fe2  { border-color: #A27E1E; }
+.accent-fe2  .section-title { color: #C09528; }
+.accent-pe   { border-color: #7993AE; }
+.accent-pe   .section-title { color: #95B0C8; }
+.accent-mst  { border-color: #B08823; }
+.accent-mst  .section-title { color: #D0A028; }
+
+/* A labeled parameter row: [Label | ParamSlider] */
+.param-row {
+    height: 24px;
+    width: 1s;
+    col-between: 6px;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+.param-label {
+    width: 56px;
+    height: 1s;
+    color: #E8EAF0;
+    font-size: 11;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+
+/* Preset pickers & buttons */
+.cat-pick {
+    width: 100px;
+    height: 26px;
+}
+.preset-name-pick {
+    width: 240px;
+    height: 26px;
+}
+picklist {
+    height: 26px;
+    background-color: #1E2028;
+    border-width: 1px;
+    border-color: #1A1C22;
+    border-radius: 3px;
+    color: #E8EAF0;
+    font-size: 12;
+}
+.nav-btn {
+    width: 26px;
+    height: 26px;
+    child-space: 1s;
+    background-color: #2C3038;
+    border-color: #3A4050;
+    border-width: 1px;
+    border-radius: 4px;
+    color: #E8EAF0;
+}
+.nav-btn:hover {
+    background-color: #3A4050;
+}
+
+/* Row wrappers */
+.row-equal {
+    col-between: 6px;
+    height: auto;
+    width: 1s;
+}
+
+/* High-contrast dropdown for preset pickers (vizia defaults are light-on-light) */
+dropdown {
+    background-color: #1E2028;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #3A4050;
+    color: #E8EAF0;
+}
+dropdown:hover {
+    background-color: #2A2D36;
+}
+dropdown .title {
+    color: #E8EAF0;
+    background-color: transparent;
+    border-width: 0px;
+    child-space: 4px;
+}
+dropdown popup {
+    background-color: #23262E;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #3A4050;
+    outer-shadow: 0 3 10 #00000080;
+}
+dropdown list label {
+    color: #E8EAF0;
+    background-color: #23262E;
+    height: 24px;
+    font-size: 12;
+    child-left: 8px;
+    child-right: 8px;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+dropdown list label:hover {
+    background-color: #3A4050;
+    color: #FFFFFF;
+}
+dropdown list label:checked {
+    background-color: #F0A526;
+    color: #1E2028;
+}
+picklist label,
+picklist .icon {
+    color: #E8EAF0;
+}
+
+/* Radio group for enum parameters */
+radio-group {
+    layout-type: row;
+    height: 22px;
+    width: 1s;
+    col-between: 2px;
+}
+radio-group label {
+    width: 1s;
+    height: 1s;
+    child-space: 1s;
+    font-size: 11;
+    color: #B8BAC0;
+    background-color: #1E2028;
+    border-width: 1px;
+    border-color: #1A1C22;
+    border-radius: 3px;
+}
+radio-group label:hover {
+    background-color: #2A2D36;
+    color: #FFFFFF;
+}
+radio-group label:checked {
+    background-color: #F0A526;
+    color: #1E2028;
+    border-color: #B88018;
+}
+radio-group label:checked:hover {
+    background-color: #FFB833;
+}
+"#;
+
+#[derive(Lens)]
+struct AppData {
+    params: Arc<SynthParams>,
+    gui_context: Arc<dyn GuiContext>,
+
+    categories: Vec<String>,
+    selected_category_idx: usize,
+
+    preset_names: Vec<String>,
+    selected_preset_idx: usize,
+}
+
+#[derive(Debug)]
+enum AppEvent {
+    SelectCategory(usize),
+    SelectPreset(usize),
+    PrevPreset,
+    NextPreset,
+}
+
+impl AppData {
+    fn refresh_preset_list(&mut self) {
+        let cat = &self.categories[self.selected_category_idx];
+        self.preset_names = presets_in_category(cat)
+            .iter()
+            .map(|p| p.name.to_string())
+            .collect();
     }
-    let factor = query_system_scale_factor();
-    DPI_SCALE_MILLI.store((factor * 1000.0) as u32, Ordering::Relaxed);
-    factor
-}
 
-#[cfg(windows)]
-fn query_system_scale_factor() -> f32 {
-    use windows_sys::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, ReleaseDC, LOGPIXELSX};
-    unsafe {
-        let hdc = GetDC(0);
-        if hdc == 0 {
-            return 1.0;
-        }
-        let dpi = GetDeviceCaps(hdc, LOGPIXELSX as _);
-        ReleaseDC(0, hdc);
-        if dpi <= 0 {
-            1.0
-        } else {
-            (dpi as f32 / 96.0).max(1.0)
+    fn apply_selected(&self) {
+        let cat = &self.categories[self.selected_category_idx];
+        let presets = presets_in_category(cat);
+        if let Some(p) = presets.get(self.selected_preset_idx) {
+            apply_preset(p, &self.params, self.gui_context.as_ref());
         }
     }
 }
 
-#[cfg(not(windows))]
-fn query_system_scale_factor() -> f32 {
-    1.0
+impl Model for AppData {
+    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
+        event.map(|app_event, _| match app_event {
+            AppEvent::SelectCategory(idx) => {
+                self.selected_category_idx = *idx;
+                self.selected_preset_idx = 0;
+                self.refresh_preset_list();
+                // Don't auto-apply when category changes — user may be browsing.
+            }
+            AppEvent::SelectPreset(idx) => {
+                self.selected_preset_idx = *idx;
+                self.apply_selected();
+            }
+            AppEvent::PrevPreset => {
+                let len = self.preset_names.len();
+                if len > 0 {
+                    self.selected_preset_idx = if self.selected_preset_idx == 0 {
+                        len - 1
+                    } else {
+                        self.selected_preset_idx - 1
+                    };
+                    self.apply_selected();
+                }
+            }
+            AppEvent::NextPreset => {
+                let len = self.preset_names.len();
+                if len > 0 {
+                    self.selected_preset_idx = (self.selected_preset_idx + 1) % len;
+                    self.apply_selected();
+                }
+            }
+        });
+    }
 }
 
-/// Scale a design-time size by the current DPI factor, returning u16 pixels.
-#[inline]
-fn px(n: f32) -> u16 {
-    (n * dpi_scale()).round() as u16
-}
-
-pub(crate) fn default_state() -> Arc<IcedState> {
-    let scale = dpi_scale();
-    IcedState::from_size(
-        (BASE_WIDTH as f32 * scale).round() as u32,
-        (BASE_HEIGHT as f32 * scale).round() as u32,
-    )
+pub(crate) fn default_state() -> Arc<ViziaState> {
+    ViziaState::new(|| (BASE_WIDTH, BASE_HEIGHT))
 }
 
 pub(crate) fn create(
     params: Arc<SynthParams>,
-    editor_state: Arc<IcedState>,
+    editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
-    create_iced_editor::<SynthEditor>(editor_state, params)
-}
+    create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, gui_context| {
+        assets::register_noto_sans_light(cx);
+        assets::register_noto_sans_thin(cx);
+        cx.add_stylesheet(STYLE).expect("invalid stylesheet");
 
-// ---------------------------------------------------------------------------
-// Color palette
-// ---------------------------------------------------------------------------
+        let categories: Vec<String> = CATEGORIES.iter().map(|c| c.to_string()).collect();
+        let preset_names: Vec<String> = presets_in_category(CATEGORIES[0])
+            .iter()
+            .map(|p| p.name.to_string())
+            .collect();
 
-// Palette inspired by the Ruhrvibe logo: dark grey + orange + slate blue.
-const COLOR_BG: Color = Color::from_rgb(0.14, 0.15, 0.18);
-const COLOR_TEXT: Color = Color::from_rgb(0.92, 0.93, 0.96);
-const COLOR_TEXT_DIM: Color = Color::from_rgb(0.60, 0.62, 0.68);
-
-const COLOR_OSC1: Color = Color::from_rgb(0.94, 0.65, 0.15);   // logo orange
-const COLOR_OSC2: Color = Color::from_rgb(0.85, 0.55, 0.10);   // darker amber
-const COLOR_FLT1: Color = Color::from_rgb(0.25, 0.38, 0.55);   // slate blue (gear)
-const COLOR_FLT2: Color = Color::from_rgb(0.35, 0.50, 0.65);   // lighter slate
-const COLOR_AMP_ENV: Color = Color::from_rgb(0.94, 0.58, 0.18); // warm orange
-const COLOR_F1_ENV: Color = Color::from_rgb(0.30, 0.45, 0.60);  // steel blue
-const COLOR_F2_ENV: Color = Color::from_rgb(0.70, 0.52, 0.12);  // bronze
-const COLOR_MASTER: Color = Color::from_rgb(0.80, 0.60, 0.15);  // gold
-const COLOR_PITCH_ENV: Color = Color::from_rgb(0.50, 0.65, 0.78); // soft blue
-const COLOR_HEADER: Color = Color::from_rgb(0.94, 0.65, 0.15);  // logo orange
-
-/// Tint a color towards the dark background, keeping some saturation.
-fn tint_bg(color: Color, alpha: f32) -> Color {
-    let bg_r = COLOR_BG.r;
-    let bg_g = COLOR_BG.g;
-    let bg_b = COLOR_BG.b;
-    Color::from_rgb(
-        bg_r + (color.r - bg_r) * alpha,
-        bg_g + (color.g - bg_g) * alpha,
-        bg_b + (color.b - bg_b) * alpha,
-    )
-}
-
-struct SectionStyle {
-    accent: Color,
-}
-
-impl container::StyleSheet for SectionStyle {
-    fn style(&self) -> container::Style {
-        container::Style {
-            text_color: Some(COLOR_TEXT),
-            // Semi-transparent: 15% accent tint over the dark background.
-            background: Some(Background::Color(tint_bg(self.accent, 0.15))),
-            border_radius: 8.0 * dpi_scale(),
-            border_width: 1.5 * dpi_scale(),
-            border_color: tint_bg(self.accent, 0.45),
+        AppData {
+            params: params.clone(),
+            gui_context,
+            categories,
+            selected_category_idx: 0,
+            preset_names,
+            selected_preset_idx: 0,
         }
-    }
+        .build(cx);
+
+        VStack::new(cx, |cx| {
+            build_header(cx);
+            build_osc_row(cx);
+            build_filter_row(cx);
+            build_env_row(cx);
+            build_bottom_row(cx);
+        })
+        .class("root");
+
+        ResizeHandle::new(cx);
+    })
 }
 
-struct PanelStyle;
+fn build_header(cx: &mut Context) {
+    HStack::new(cx, |cx| {
+        Label::new(cx, "RUHRVIBE").class("header-title");
 
-impl container::StyleSheet for PanelStyle {
-    fn style(&self) -> container::Style {
-        container::Style {
-            text_color: Some(COLOR_TEXT),
-            background: Some(Background::Color(Color::from_rgba(0.10, 0.11, 0.14, 0.85))),
-            border_radius: 10.0 * dpi_scale(),
-            border_width: 1.0 * dpi_scale(),
-            border_color: Color::from_rgb(0.22, 0.24, 0.28),
-        }
-    }
-}
+        // Spacer
+        Element::new(cx).width(Stretch(1.0)).height(Pixels(1.0));
 
-// ---------------------------------------------------------------------------
-// Editor
-// ---------------------------------------------------------------------------
-
-struct SynthEditor {
-    params: Arc<SynthParams>,
-    context: Arc<dyn GuiContext>,
-
-    osc1_wave: nih_widgets::param_slider::State,
-    osc1_level: nih_widgets::param_slider::State,
-    osc1_detune: nih_widgets::param_slider::State,
-    osc1_octave: nih_widgets::param_slider::State,
-    osc1_on: nih_widgets::param_slider::State,
-    osc1_unison: nih_widgets::param_slider::State,
-    osc1_spread: nih_widgets::param_slider::State,
-
-    osc2_wave: nih_widgets::param_slider::State,
-    osc2_level: nih_widgets::param_slider::State,
-    osc2_detune: nih_widgets::param_slider::State,
-    osc2_octave: nih_widgets::param_slider::State,
-    osc2_on: nih_widgets::param_slider::State,
-    osc2_unison: nih_widgets::param_slider::State,
-    osc2_spread: nih_widgets::param_slider::State,
-
-    flt1_type: nih_widgets::param_slider::State,
-    flt1_cutoff: nih_widgets::param_slider::State,
-    flt1_res: nih_widgets::param_slider::State,
-    flt1_drive: nih_widgets::param_slider::State,
-    flt1_envamt: nih_widgets::param_slider::State,
-    flt1_on: nih_widgets::param_slider::State,
-
-    flt2_type: nih_widgets::param_slider::State,
-    flt2_cutoff: nih_widgets::param_slider::State,
-    flt2_res: nih_widgets::param_slider::State,
-    flt2_drive: nih_widgets::param_slider::State,
-    flt2_envamt: nih_widgets::param_slider::State,
-    flt2_on: nih_widgets::param_slider::State,
-
-    amp_a: nih_widgets::param_slider::State,
-    amp_d: nih_widgets::param_slider::State,
-    amp_s: nih_widgets::param_slider::State,
-    amp_r: nih_widgets::param_slider::State,
-
-    f1e_a: nih_widgets::param_slider::State,
-    f1e_d: nih_widgets::param_slider::State,
-    f1e_s: nih_widgets::param_slider::State,
-    f1e_r: nih_widgets::param_slider::State,
-
-    f2e_a: nih_widgets::param_slider::State,
-    f2e_d: nih_widgets::param_slider::State,
-    f2e_s: nih_widgets::param_slider::State,
-    f2e_r: nih_widgets::param_slider::State,
-
-    pe_a: nih_widgets::param_slider::State,
-    pe_d: nih_widgets::param_slider::State,
-    pe_s: nih_widgets::param_slider::State,
-    pe_r: nih_widgets::param_slider::State,
-    pe_amt: nih_widgets::param_slider::State,
-
-    master_gain: nih_widgets::param_slider::State,
-    num_voices: nih_widgets::param_slider::State,
-
-    preset_pick: pick_list::State<String>,
-    selected_preset: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    ParamUpdate(nih_widgets::ParamMessage),
-    SelectPreset(String),
-}
-
-impl IcedEditor for SynthEditor {
-    type Executor = executor::Default;
-    type Message = Message;
-    type InitializationFlags = Arc<SynthParams>;
-
-    fn new(
-        params: Self::InitializationFlags,
-        context: Arc<dyn GuiContext>,
-    ) -> (Self, Command<Self::Message>) {
-        let editor = SynthEditor {
-            params,
-            context,
-            osc1_wave: Default::default(),
-            osc1_level: Default::default(),
-            osc1_detune: Default::default(),
-            osc1_octave: Default::default(),
-            osc1_on: Default::default(),
-            osc1_unison: Default::default(),
-            osc1_spread: Default::default(),
-            osc2_wave: Default::default(),
-            osc2_level: Default::default(),
-            osc2_detune: Default::default(),
-            osc2_octave: Default::default(),
-            osc2_on: Default::default(),
-            osc2_unison: Default::default(),
-            osc2_spread: Default::default(),
-            flt1_type: Default::default(),
-            flt1_cutoff: Default::default(),
-            flt1_res: Default::default(),
-            flt1_drive: Default::default(),
-            flt1_envamt: Default::default(),
-            flt1_on: Default::default(),
-            flt2_type: Default::default(),
-            flt2_cutoff: Default::default(),
-            flt2_res: Default::default(),
-            flt2_drive: Default::default(),
-            flt2_envamt: Default::default(),
-            flt2_on: Default::default(),
-            amp_a: Default::default(),
-            amp_d: Default::default(),
-            amp_s: Default::default(),
-            amp_r: Default::default(),
-            f1e_a: Default::default(),
-            f1e_d: Default::default(),
-            f1e_s: Default::default(),
-            f1e_r: Default::default(),
-            f2e_a: Default::default(),
-            f2e_d: Default::default(),
-            f2e_s: Default::default(),
-            f2e_r: Default::default(),
-            pe_a: Default::default(),
-            pe_d: Default::default(),
-            pe_s: Default::default(),
-            pe_r: Default::default(),
-            pe_amt: Default::default(),
-            master_gain: Default::default(),
-            num_voices: Default::default(),
-            preset_pick: Default::default(),
-            selected_preset: None,
-        };
-        (editor, Command::none())
-    }
-
-    fn context(&self) -> &dyn GuiContext {
-        self.context.as_ref()
-    }
-
-    fn update(
-        &mut self,
-        _window: &mut WindowQueue,
-        message: Self::Message,
-    ) -> Command<Self::Message> {
-        match message {
-            Message::ParamUpdate(m) => self.handle_param_message(m),
-            Message::SelectPreset(name) => {
-                if let Some(preset) = FACTORY_PRESETS.iter().find(|p| p.name == name) {
-                    apply_preset(preset, &self.params, self.context.as_ref());
-                }
-                self.selected_preset = Some(name);
-            }
-        }
-        Command::none()
-    }
-
-    fn view(&mut self) -> Element<'_, Self::Message> {
-        let preset_names: Vec<String> =
-            FACTORY_PRESETS.iter().map(|p| p.name.to_string()).collect();
-
-        let header = Row::new()
-            .align_items(Alignment::Center)
-            .spacing(px(16.0))
-            .push(
-                Text::new("RUHRVIBE")
-                    .size(px(26.0))
-                    .color(COLOR_HEADER)
-                    .width(Length::Fill),
-            )
-            .push(
-                Text::new("Preset")
-                    .size(px(16.0))
-                    .color(COLOR_TEXT_DIM),
-            )
-            .push(
-                PickList::new(
-                    &mut self.preset_pick,
-                    preset_names,
-                    self.selected_preset.clone(),
-                    Message::SelectPreset,
-                )
-                .text_size(px(15.0))
-                .width(Length::Units(px(200.0))),
-            );
-
-        let osc1 = section(
-            "OSCILLATOR 1",
-            COLOR_OSC1,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("Wave", nih_widgets::ParamSlider::new(
-                    &mut self.osc1_wave,
-                    &self.params.osc1.waveform,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Level", nih_widgets::ParamSlider::new(
-                    &mut self.osc1_level,
-                    &self.params.osc1.level,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Detune", nih_widgets::ParamSlider::new(
-                    &mut self.osc1_detune,
-                    &self.params.osc1.detune,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Octave", nih_widgets::ParamSlider::new(
-                    &mut self.osc1_octave,
-                    &self.params.osc1.octave,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("On", nih_widgets::ParamSlider::new(
-                    &mut self.osc1_on,
-                    &self.params.osc1.enabled,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Unison", nih_widgets::ParamSlider::new(
-                    &mut self.osc1_unison,
-                    &self.params.osc1.unison_voices,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Spread", nih_widgets::ParamSlider::new(
-                    &mut self.osc1_spread,
-                    &self.params.osc1.unison_spread,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let osc2 = section(
-            "OSCILLATOR 2",
-            COLOR_OSC2,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("Wave", nih_widgets::ParamSlider::new(
-                    &mut self.osc2_wave,
-                    &self.params.osc2.waveform,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Level", nih_widgets::ParamSlider::new(
-                    &mut self.osc2_level,
-                    &self.params.osc2.level,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Detune", nih_widgets::ParamSlider::new(
-                    &mut self.osc2_detune,
-                    &self.params.osc2.detune,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Octave", nih_widgets::ParamSlider::new(
-                    &mut self.osc2_octave,
-                    &self.params.osc2.octave,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("On", nih_widgets::ParamSlider::new(
-                    &mut self.osc2_on,
-                    &self.params.osc2.enabled,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Unison", nih_widgets::ParamSlider::new(
-                    &mut self.osc2_unison,
-                    &self.params.osc2.unison_voices,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Spread", nih_widgets::ParamSlider::new(
-                    &mut self.osc2_spread,
-                    &self.params.osc2.unison_spread,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let flt1 = section(
-            "FILTER 1",
-            COLOR_FLT1,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("Type", nih_widgets::ParamSlider::new(
-                    &mut self.flt1_type,
-                    &self.params.filter1.filter_type,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Cutoff", nih_widgets::ParamSlider::new(
-                    &mut self.flt1_cutoff,
-                    &self.params.filter1.cutoff,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Res", nih_widgets::ParamSlider::new(
-                    &mut self.flt1_res,
-                    &self.params.filter1.resonance,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Drive", nih_widgets::ParamSlider::new(
-                    &mut self.flt1_drive,
-                    &self.params.filter1.drive,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("EnvAmt", nih_widgets::ParamSlider::new(
-                    &mut self.flt1_envamt,
-                    &self.params.filter1.env_amount,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("On", nih_widgets::ParamSlider::new(
-                    &mut self.flt1_on,
-                    &self.params.filter1.enabled,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let flt2 = section(
-            "FILTER 2",
-            COLOR_FLT2,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("Type", nih_widgets::ParamSlider::new(
-                    &mut self.flt2_type,
-                    &self.params.filter2.filter_type,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Cutoff", nih_widgets::ParamSlider::new(
-                    &mut self.flt2_cutoff,
-                    &self.params.filter2.cutoff,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Res", nih_widgets::ParamSlider::new(
-                    &mut self.flt2_res,
-                    &self.params.filter2.resonance,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Drive", nih_widgets::ParamSlider::new(
-                    &mut self.flt2_drive,
-                    &self.params.filter2.drive,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("EnvAmt", nih_widgets::ParamSlider::new(
-                    &mut self.flt2_envamt,
-                    &self.params.filter2.env_amount,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("On", nih_widgets::ParamSlider::new(
-                    &mut self.flt2_on,
-                    &self.params.filter2.enabled,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let amp_env = section(
-            "AMP ENVELOPE",
-            COLOR_AMP_ENV,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("A", nih_widgets::ParamSlider::new(
-                    &mut self.amp_a,
-                    &self.params.amp_env.attack,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("D", nih_widgets::ParamSlider::new(
-                    &mut self.amp_d,
-                    &self.params.amp_env.decay,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("S", nih_widgets::ParamSlider::new(
-                    &mut self.amp_s,
-                    &self.params.amp_env.sustain,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("R", nih_widgets::ParamSlider::new(
-                    &mut self.amp_r,
-                    &self.params.amp_env.release,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let f1_env = section(
-            "FILTER 1 ENV",
-            COLOR_F1_ENV,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("A", nih_widgets::ParamSlider::new(
-                    &mut self.f1e_a,
-                    &self.params.filter1_env.attack,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("D", nih_widgets::ParamSlider::new(
-                    &mut self.f1e_d,
-                    &self.params.filter1_env.decay,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("S", nih_widgets::ParamSlider::new(
-                    &mut self.f1e_s,
-                    &self.params.filter1_env.sustain,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("R", nih_widgets::ParamSlider::new(
-                    &mut self.f1e_r,
-                    &self.params.filter1_env.release,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let f2_env = section(
-            "FILTER 2 ENV",
-            COLOR_F2_ENV,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("A", nih_widgets::ParamSlider::new(
-                    &mut self.f2e_a,
-                    &self.params.filter2_env.attack,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("D", nih_widgets::ParamSlider::new(
-                    &mut self.f2e_d,
-                    &self.params.filter2_env.decay,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("S", nih_widgets::ParamSlider::new(
-                    &mut self.f2e_s,
-                    &self.params.filter2_env.sustain,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("R", nih_widgets::ParamSlider::new(
-                    &mut self.f2e_r,
-                    &self.params.filter2_env.release,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let pitch_env = section(
-            "PITCH ENVELOPE",
-            COLOR_PITCH_ENV,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("A", nih_widgets::ParamSlider::new(
-                    &mut self.pe_a,
-                    &self.params.pitch_env.attack,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("D", nih_widgets::ParamSlider::new(
-                    &mut self.pe_d,
-                    &self.params.pitch_env.decay,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("S", nih_widgets::ParamSlider::new(
-                    &mut self.pe_s,
-                    &self.params.pitch_env.sustain,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("R", nih_widgets::ParamSlider::new(
-                    &mut self.pe_r,
-                    &self.params.pitch_env.release,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Amount", nih_widgets::ParamSlider::new(
-                    &mut self.pe_amt,
-                    &self.params.pitch_env.amount,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let master = section(
-            "MASTER",
-            COLOR_MASTER,
-            Column::new()
-                .spacing(px(6.0))
-                .push(labeled("Gain", nih_widgets::ParamSlider::new(
-                    &mut self.master_gain,
-                    &self.params.master_gain,
-                ).text_size(px(14.0)).map(Message::ParamUpdate)))
-                .push(labeled("Voices", nih_widgets::ParamSlider::new(
-                    &mut self.num_voices,
-                    &self.params.num_voices,
-                ).text_size(px(14.0)).map(Message::ParamUpdate))),
-        );
-
-        let row_oscs = Row::new().spacing(px(12.0)).push(osc1).push(osc2);
-        let row_filters = Row::new().spacing(px(12.0)).push(flt1).push(flt2);
-        let row_envs = Row::new()
-            .spacing(px(12.0))
-            .push(amp_env)
-            .push(f1_env)
-            .push(f2_env)
-            .push(pitch_env);
-        let row_master = Row::new().spacing(px(12.0)).push(master);
-
-        let content = Column::new()
-            .padding(px(14.0))
-            .spacing(px(12.0))
-            .push(header)
-            .push(row_oscs)
-            .push(row_filters)
-            .push(row_envs)
-            .push(row_master);
-
-        Container::new(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(px(8.0))
-            .style(PanelStyle)
-            .into()
-    }
-
-    fn background_color(&self) -> Color {
-        COLOR_BG
-    }
-}
-
-impl SynthEditor {
-    fn handle_param_message(&self, message: nih_widgets::ParamMessage) {
-        match message {
-            nih_widgets::ParamMessage::BeginSetParameter(p) => unsafe {
-                self.context.raw_begin_set_parameter(p);
-            },
-            nih_widgets::ParamMessage::SetParameterNormalized(p, v) => unsafe {
-                self.context.raw_set_parameter_normalized(p, v);
-            },
-            nih_widgets::ParamMessage::EndSetParameter(p) => unsafe {
-                self.context.raw_end_set_parameter(p);
-            },
-        }
-    }
-}
-
-fn labeled<'a>(label: &str, widget: Element<'a, Message>) -> Row<'a, Message> {
-    Row::new()
-        .align_items(Alignment::Center)
-        .spacing(px(8.0))
-        .push(
-            Text::new(label.to_string())
-                .size(px(14.0))
-                .color(COLOR_TEXT)
-                .width(Length::Units(px(64.0))),
+        // Category picker
+        PickList::new(
+            cx,
+            AppData::categories,
+            AppData::selected_category_idx,
+            true,
         )
-        .push(widget)
+        .on_select(|cx, idx| cx.emit(AppEvent::SelectCategory(idx)))
+        .class("cat-pick");
+
+        // Prev button
+        Button::new(
+            cx,
+            |cx| cx.emit(AppEvent::PrevPreset),
+            |cx| Label::new(cx, "<"),
+        )
+        .class("nav-btn");
+
+        // Preset picker
+        PickList::new(
+            cx,
+            AppData::preset_names,
+            AppData::selected_preset_idx,
+            true,
+        )
+        .on_select(|cx, idx| cx.emit(AppEvent::SelectPreset(idx)))
+        .class("preset-name-pick");
+
+        // Next button
+        Button::new(
+            cx,
+            |cx| cx.emit(AppEvent::NextPreset),
+            |cx| Label::new(cx, ">"),
+        )
+        .class("nav-btn");
+    })
+    .class("header");
 }
 
-fn section<'a>(title: &str, accent: Color, content: Column<'a, Message>) -> Element<'a, Message> {
-    let title_text = Text::new(title.to_string())
-        .size(px(15.0))
-        .color(accent);
+fn build_osc_row(cx: &mut Context) {
+    HStack::new(cx, |cx| {
+        osc_section(cx, "OSCILLATOR 1", "accent-osc1", OscSel::Osc1);
+        osc_section(cx, "OSCILLATOR 2", "accent-osc2", OscSel::Osc2);
+    })
+    .class("row-equal");
+}
 
-    let inner = Column::new()
-        .spacing(px(8.0))
-        .push(title_text)
-        .push(content);
+fn build_filter_row(cx: &mut Context) {
+    HStack::new(cx, |cx| {
+        filter_section(cx, "FILTER 1", "accent-flt1", FilterSel::Flt1);
+        filter_section(cx, "FILTER 2", "accent-flt2", FilterSel::Flt2);
+    })
+    .class("row-equal");
+}
 
-    Container::new(inner)
-        .padding(px(12.0))
-        .width(Length::Fill)
-        .style(SectionStyle { accent })
-        .into()
+fn build_env_row(cx: &mut Context) {
+    HStack::new(cx, |cx| {
+        env_section(cx, "AMP ENVELOPE", "accent-amp", EnvSel::Amp);
+        env_section(cx, "FILTER 1 ENV", "accent-fe1", EnvSel::F1);
+        env_section(cx, "FILTER 2 ENV", "accent-fe2", EnvSel::F2);
+    })
+    .class("row-equal");
+}
+
+fn build_bottom_row(cx: &mut Context) {
+    HStack::new(cx, |cx| {
+        pitch_env_section(cx);
+        master_section(cx);
+    })
+    .class("row-equal");
+}
+
+#[derive(Clone, Copy)]
+enum OscSel { Osc1, Osc2 }
+
+#[derive(Clone, Copy)]
+enum FilterSel { Flt1, Flt2 }
+
+#[derive(Clone, Copy)]
+enum EnvSel { Amp, F1, F2 }
+
+fn section_container<F>(cx: &mut Context, title: &str, accent_class: &'static str, content: F)
+where
+    F: FnOnce(&mut Context),
+{
+    VStack::new(cx, |cx| {
+        Label::new(cx, title).class("section-title");
+        content(cx);
+    })
+    .class("section")
+    .class(accent_class);
+}
+
+fn labeled_row<F>(cx: &mut Context, label: &str, content: F)
+where
+    F: FnOnce(&mut Context),
+{
+    HStack::new(cx, |cx| {
+        Label::new(cx, label).class("param-label");
+        content(cx);
+    })
+    .class("param-row");
+}
+
+fn osc_section(cx: &mut Context, title: &str, accent: &'static str, sel: OscSel) {
+    section_container(cx, title, accent, move |cx| {
+        labeled_row(cx, "Wave", move |cx| {
+            match sel {
+                OscSel::Osc1 => { RadioGroup::new(cx, AppData::params, |p| &p.osc1.waveform, WAVEFORM_LABELS); }
+                OscSel::Osc2 => { RadioGroup::new(cx, AppData::params, |p| &p.osc2.waveform, WAVEFORM_LABELS); }
+            }
+        });
+        labeled_row(cx, "Level", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.level); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.level); }
+            }
+        });
+        labeled_row(cx, "Detune", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.detune); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.detune); }
+            }
+        });
+        labeled_row(cx, "Octave", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.octave); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.octave); }
+            }
+        });
+        labeled_row(cx, "On", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.enabled); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.enabled); }
+            }
+        });
+        labeled_row(cx, "Unison", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.unison_voices); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.unison_voices); }
+            }
+        });
+        labeled_row(cx, "Spread", move |cx| {
+            match sel {
+                OscSel::Osc1 => { ParamSlider::new(cx, AppData::params, |p| &p.osc1.unison_spread); }
+                OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.unison_spread); }
+            }
+        });
+    });
+}
+
+fn filter_section(cx: &mut Context, title: &str, accent: &'static str, sel: FilterSel) {
+    section_container(cx, title, accent, move |cx| {
+        labeled_row(cx, "Type", move |cx| {
+            match sel {
+                FilterSel::Flt1 => { RadioGroup::new(cx, AppData::params, |p| &p.filter1.filter_type, FILTER_TYPE_LABELS); }
+                FilterSel::Flt2 => { RadioGroup::new(cx, AppData::params, |p| &p.filter2.filter_type, FILTER_TYPE_LABELS); }
+            }
+        });
+        labeled_row(cx, "Cutoff", move |cx| {
+            match sel {
+                FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.cutoff); }
+                FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.cutoff); }
+            }
+        });
+        labeled_row(cx, "Res", move |cx| {
+            match sel {
+                FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.resonance); }
+                FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.resonance); }
+            }
+        });
+        labeled_row(cx, "Drive", move |cx| {
+            match sel {
+                FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.drive); }
+                FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.drive); }
+            }
+        });
+        labeled_row(cx, "EnvAmt", move |cx| {
+            match sel {
+                FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.env_amount); }
+                FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.env_amount); }
+            }
+        });
+        labeled_row(cx, "On", move |cx| {
+            match sel {
+                FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.enabled); }
+                FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.enabled); }
+            }
+        });
+    });
+}
+
+fn env_section(cx: &mut Context, title: &str, accent: &'static str, sel: EnvSel) {
+    section_container(cx, title, accent, move |cx| {
+        labeled_row(cx, "A", move |cx| {
+            match sel {
+                EnvSel::Amp => { ParamSlider::new(cx, AppData::params, |p| &p.amp_env.attack); }
+                EnvSel::F1  => { ParamSlider::new(cx, AppData::params, |p| &p.filter1_env.attack); }
+                EnvSel::F2  => { ParamSlider::new(cx, AppData::params, |p| &p.filter2_env.attack); }
+            }
+        });
+        labeled_row(cx, "D", move |cx| {
+            match sel {
+                EnvSel::Amp => { ParamSlider::new(cx, AppData::params, |p| &p.amp_env.decay); }
+                EnvSel::F1  => { ParamSlider::new(cx, AppData::params, |p| &p.filter1_env.decay); }
+                EnvSel::F2  => { ParamSlider::new(cx, AppData::params, |p| &p.filter2_env.decay); }
+            }
+        });
+        labeled_row(cx, "S", move |cx| {
+            match sel {
+                EnvSel::Amp => { ParamSlider::new(cx, AppData::params, |p| &p.amp_env.sustain); }
+                EnvSel::F1  => { ParamSlider::new(cx, AppData::params, |p| &p.filter1_env.sustain); }
+                EnvSel::F2  => { ParamSlider::new(cx, AppData::params, |p| &p.filter2_env.sustain); }
+            }
+        });
+        labeled_row(cx, "R", move |cx| {
+            match sel {
+                EnvSel::Amp => { ParamSlider::new(cx, AppData::params, |p| &p.amp_env.release); }
+                EnvSel::F1  => { ParamSlider::new(cx, AppData::params, |p| &p.filter1_env.release); }
+                EnvSel::F2  => { ParamSlider::new(cx, AppData::params, |p| &p.filter2_env.release); }
+            }
+        });
+    });
+}
+
+fn pitch_env_section(cx: &mut Context) {
+    section_container(cx, "PITCH ENVELOPE", "accent-pe", |cx| {
+        labeled_row(cx, "A",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.pitch_env.attack); });
+        labeled_row(cx, "D",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.pitch_env.decay); });
+        labeled_row(cx, "S",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.pitch_env.sustain); });
+        labeled_row(cx, "R",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.pitch_env.release); });
+        labeled_row(cx, "Amount", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.pitch_env.amount); });
+    });
+}
+
+fn master_section(cx: &mut Context) {
+    section_container(cx, "MASTER", "accent-mst", |cx| {
+        labeled_row(cx, "Gain",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.master_gain); });
+        labeled_row(cx, "Voices", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.num_voices); });
+    });
+}
+
+// Silence warnings about unused constant for 157-preset count.
+#[allow(dead_code)]
+const _TOTAL_PRESETS: usize = FACTORY_PRESETS.len();
+
+// --- Radio group widget for discrete enum parameters ---
+
+#[derive(Debug)]
+enum RadioEvent {
+    Set(f32),
+}
+
+pub struct RadioGroup {
+    param_base: ParamWidgetBase,
+}
+
+impl RadioGroup {
+    pub fn new<'a, L, P, FMap>(
+        cx: &'a mut Context,
+        params: L,
+        params_to_param: FMap,
+        labels: &'static [&'static str],
+    ) -> Handle<'a, Self>
+    where
+        L: Lens<Target = Arc<SynthParams>> + Copy,
+        P: Param + 'static,
+        FMap: Fn(&Arc<SynthParams>) -> &P + Copy + 'static,
+    {
+        Self {
+            param_base: ParamWidgetBase::new(cx, params, params_to_param),
+        }
+        .build(
+            cx,
+            ParamWidgetBase::build_view(params, params_to_param, move |cx, param_data| {
+                let count = labels.len().max(1);
+                let step_denom = (count.saturating_sub(1)).max(1) as f32;
+                let current = param_data.make_lens(|p| p.unmodulated_normalized_value());
+                let epsilon = 0.5 / step_denom;
+                for (i, &label) in labels.iter().enumerate() {
+                    let value = i as f32 / step_denom;
+                    Label::new(cx, label)
+                        .checked(current.map(move |v| (*v - value).abs() < epsilon))
+                        .on_press(move |cx| {
+                            cx.emit(RadioEvent::Set(value));
+                        });
+                }
+            }),
+        )
+    }
+}
+
+impl View for RadioGroup {
+    fn element(&self) -> Option<&'static str> {
+        Some("radio-group")
+    }
+
+    fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+        event.map(|e: &RadioEvent, meta| match e {
+            RadioEvent::Set(v) => {
+                self.param_base.begin_set_parameter(cx);
+                self.param_base.set_normalized_value(cx, *v);
+                self.param_base.end_set_parameter(cx);
+                meta.consume();
+            }
+        });
+    }
 }
