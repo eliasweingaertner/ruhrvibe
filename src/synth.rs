@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::fx::chorus::Chorus;
 use crate::fx::delay::Delay;
+use crate::fx::shimmer::Shimmer;
 use crate::params::{FilterParams, OscParams, SynthParams};
 use crate::voice::{
     EnvelopeVoiceParams, FilterVoiceParams, OscBankPrecomp, OscVoiceParams,
@@ -24,6 +25,7 @@ pub struct SubtractiveSynth {
     voices: Vec<Voice>,
     chorus: Chorus,
     delay: Delay,
+    shimmer: Shimmer,
     sample_rate: f32,
 }
 
@@ -36,6 +38,7 @@ impl Default for SubtractiveSynth {
             voices,
             chorus: Chorus::new(sample_rate),
             delay: Delay::new(sample_rate),
+            shimmer: Shimmer::new(sample_rate),
             sample_rate,
         }
     }
@@ -165,6 +168,7 @@ impl Plugin for SubtractiveSynth {
         }
         self.chorus.set_sample_rate(self.sample_rate);
         self.delay.set_sample_rate(self.sample_rate);
+        self.shimmer.set_sample_rate(self.sample_rate);
         true
     }
 
@@ -174,6 +178,7 @@ impl Plugin for SubtractiveSynth {
         }
         self.chorus.reset();
         self.delay.reset();
+        self.shimmer.reset();
     }
 
     fn process(
@@ -185,7 +190,8 @@ impl Plugin for SubtractiveSynth {
         let max_voices = (self.params.num_voices.value() as usize).min(MAX_VOICES);
         let chorus_enabled = self.params.chorus.enabled.value();
         let delay_enabled = self.params.delay.enabled.value();
-        let fx_active = chorus_enabled || delay_enabled;
+        let shimmer_enabled = self.params.shimmer.enabled.value();
+        let fx_active = chorus_enabled || delay_enabled || shimmer_enabled;
 
         let mut next_event = context.next_event();
         let mut any_active = self.active_voice_count(max_voices) > 0 || next_event.is_some();
@@ -280,6 +286,14 @@ impl Plugin for SubtractiveSynth {
                 let tone = self.params.delay.tone.smoothed.next();
                 let mix = self.params.delay.mix.smoothed.next();
                 let (l, r) = self.delay.process(mix_l, mix_r, time_ms, feedback, tone, mix);
+                mix_l = l;
+                mix_r = r;
+            }
+            if shimmer_enabled {
+                let time_ms = self.params.shimmer.time_ms.smoothed.next();
+                let feedback = self.params.shimmer.feedback.smoothed.next();
+                let mix = self.params.shimmer.mix.smoothed.next();
+                let (l, r) = self.shimmer.process(mix_l, mix_r, time_ms, feedback, mix);
                 mix_l = l;
                 mix_r = r;
             }

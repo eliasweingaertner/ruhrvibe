@@ -450,6 +450,51 @@ impl DelayFxParams {
     }
 }
 
+/// Parameters for the shimmer delay.
+#[derive(Params)]
+pub struct ShimmerFxParams {
+    #[id = "time"]
+    pub time_ms: FloatParam,
+    #[id = "fb"]
+    pub feedback: FloatParam,
+    #[id = "mix"]
+    pub mix: FloatParam,
+    #[id = "on"]
+    pub enabled: BoolParam,
+}
+
+impl ShimmerFxParams {
+    fn new() -> Self {
+        Self {
+            time_ms: FloatParam::new(
+                "Time",
+                500.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(30.0))
+            .with_unit(" ms")
+            .with_value_to_string(Arc::new(|v| format!("{:.0} ms", v))),
+            feedback: FloatParam::new(
+                "Feedback",
+                0.45,
+                FloatRange::Linear { min: 0.0, max: 0.9 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+            mix: FloatParam::new("Mix", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            enabled: BoolParam::new("Enabled", false),
+        }
+    }
+}
+
 /// Top-level plugin parameters.
 #[derive(Params)]
 pub struct SynthParams {
@@ -487,6 +532,9 @@ pub struct SynthParams {
     #[nested(id_prefix = "delay", group = "Delay")]
     pub delay: Arc<DelayFxParams>,
 
+    #[nested(id_prefix = "shim", group = "Shimmer")]
+    pub shimmer: Arc<ShimmerFxParams>,
+
     #[id = "master_gain"]
     pub master_gain: FloatParam,
 
@@ -508,6 +556,7 @@ impl Default for SynthParams {
             pitch_env: Arc::new(PitchEnvParams::new()),
             chorus: Arc::new(ChorusFxParams::new()),
             delay: Arc::new(DelayFxParams::new()),
+            shimmer: Arc::new(ShimmerFxParams::new()),
             master_gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(-6.0),

@@ -119,6 +119,8 @@ param-slider .value-entry {
 .accent-chr  .section-title { color: #8FBF95; }
 .accent-dly  { border-color: #7D6BA0; }
 .accent-dly  .section-title { color: #A78FC8; }
+.accent-shm  { border-color: #A86B85; }
+.accent-shm  .section-title { color: #D08FA5; }
 
 /* A labeled parameter row: [Label | ParamSlider] */
 .param-row {
@@ -446,6 +448,7 @@ fn build_fx_row(cx: &mut Context) {
     HStack::new(cx, |cx| {
         chorus_section(cx);
         delay_section(cx);
+        shimmer_section(cx);
     })
     .class("row-equal");
 }
@@ -656,6 +659,15 @@ fn delay_section(cx: &mut Context) {
         labeled_row(cx, "Feedback", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.feedback); });
         labeled_row(cx, "Tone",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.tone); });
         labeled_row(cx, "Mix",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.mix); });
+    });
+}
+
+fn shimmer_section(cx: &mut Context) {
+    section_container(cx, "SHIMMER (+1 OCT)", "accent-shm", |cx| {
+        labeled_row(cx, "On",       |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.enabled); });
+        labeled_row(cx, "Time",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.time_ms); });
+        labeled_row(cx, "Feedback", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.feedback); });
+        labeled_row(cx, "Mix",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.mix); });
     });
 }
 

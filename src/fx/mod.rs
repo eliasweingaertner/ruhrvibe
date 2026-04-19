@@ -6,3 +6,4 @@
 
 pub mod chorus;
 pub mod delay;
+pub mod shimmer;
