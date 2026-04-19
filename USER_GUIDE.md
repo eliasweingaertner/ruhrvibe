@@ -38,9 +38,11 @@ Ruhrvibe ships as a single bundle containing both the VST3 and CLAP builds.
 `C:\Program Files\Common Files\VST3\` (the standard system VST3 folder). Your
 DAW should detect it on the next plugin rescan.
 
-Requires a 64-bit VST3 or CLAP host. Tested with REAPER, Bitwig, Renoise, and
-Ableton Live. Other hosts almost certainly work — the nih-plug framework
-targets the standard plugin APIs.
+Requires a 64-bit VST3 or CLAP host. **Tested with REAPER and Renoise.** Other
+hosts that support standard VST3/CLAP (Bitwig, Ableton Live, Studio One, FL
+Studio, …) are likely to work since the plugin uses the nih-plug framework's
+standard exports, but this has not been verified — please report back if you
+try another host.
 
 ---
 
@@ -426,4 +428,23 @@ Host MIDI ──► Arpeggiator ──► Voice Allocator ──► 16×Voice �
 - Filter: Cytomic / Simper-style state variable filter, zero-delay feedback.
 - Anti-aliasing: PolyBLEP for saw/square.
 
-License: ISC.
+## Licensing
+
+Ruhrvibe's own source is distributed under the **ISC** license.
+
+The plugin depends on [nih-plug](https://github.com/robbert-vdh/nih-plug),
+which is itself ISC — *however*, the nih-plug **VST3 bindings**
+(`nih_export_vst3!`) are licensed under the **GPLv3** because they are
+derived from Steinberg's VST3 SDK. In practical terms:
+
+- The **VST3 build** of Ruhrvibe incorporates GPLv3 code and therefore must
+  be distributed under terms compatible with GPLv3.
+- The **CLAP build** is not affected and can be distributed under ISC alone.
+
+If you redistribute the VST3 binary, make the source available under GPLv3
+or a compatible license. If you redistribute only the CLAP build, the ISC
+terms of this repository apply.
+
+Consult the upstream
+[nih-plug LICENSE](https://github.com/robbert-vdh/nih-plug/blob/master/LICENSE)
+for the authoritative terms.
