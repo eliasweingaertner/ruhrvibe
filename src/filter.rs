@@ -1,5 +1,3 @@
-//! State Variable Filter (SVF) in the Cytomic/Simper style.
-//!
 //! Zero-delay-feedback (ZDF) topology, stable at high resonance, produces
 //! LP, HP, BP, and notch outputs from a single computation. Each voice
 //! owns its own filter instance with independent state.
