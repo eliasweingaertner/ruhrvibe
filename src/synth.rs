@@ -8,6 +8,7 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 
+use crate::arp::Arpeggiator;
 use crate::fx::chorus::Chorus;
 use crate::fx::delay::Delay;
 use crate::fx::gapper::Gapper;
@@ -28,6 +29,10 @@ pub struct SubtractiveSynth {
     delay: Delay,
     shimmer: Shimmer,
     gapper: Gapper,
+    arp: Arpeggiator,
+    /// Whether the arp was enabled on the previous sample — used to detect
+    /// disable transitions so a final note_off can flush any held voice.
+    arp_was_enabled: bool,
     sample_rate: f32,
 }
 
@@ -42,6 +47,8 @@ impl Default for SubtractiveSynth {
             delay: Delay::new(sample_rate),
             shimmer: Shimmer::new(sample_rate),
             gapper: Gapper::new(sample_rate),
+            arp: Arpeggiator::new(sample_rate),
+            arp_was_enabled: false,
             sample_rate,
         }
     }
@@ -173,6 +180,7 @@ impl Plugin for SubtractiveSynth {
         self.delay.set_sample_rate(self.sample_rate);
         self.shimmer.set_sample_rate(self.sample_rate);
         self.gapper.set_sample_rate(self.sample_rate);
+        self.arp.set_sample_rate(self.sample_rate);
         true
     }
 
@@ -184,6 +192,8 @@ impl Plugin for SubtractiveSynth {
         self.delay.reset();
         self.shimmer.reset();
         self.gapper.reset();
+        self.arp.reset();
+        self.arp_was_enabled = false;
     }
 
     fn process(
@@ -207,8 +217,25 @@ impl Plugin for SubtractiveSynth {
         let beats_per_sample = tempo_bpm as f64 / 60.0 / self.sample_rate as f64;
         let gapper_rate_beats = self.params.gapper.rate.value().beats_per_cycle();
 
+        // Arp config (stable across block).
+        let arp_enabled = self.params.arp.enabled.value();
+        let arp_pattern = self.params.arp.pattern.value();
+        let arp_rate_beats = self.params.arp.rate.value().beats_per_cycle();
+        let arp_octaves = self.params.arp.octaves.value() as u8;
+
+        // Handle enable→disable transition: release any arp-gated note so
+        // voices don't get stuck.
+        if self.arp_was_enabled && !arp_enabled {
+            if let Some(note) = self.arp.flush() {
+                self.note_off(note);
+            }
+        }
+        self.arp_was_enabled = arp_enabled;
+
         let mut next_event = context.next_event();
-        let mut any_active = self.active_voice_count(max_voices) > 0 || next_event.is_some();
+        let mut any_active = self.active_voice_count(max_voices) > 0
+            || next_event.is_some()
+            || (arp_enabled && self.arp.has_notes());
 
         for (sample_id, channel_samples) in buffer.iter_samples().enumerate() {
             // Drain any MIDI events that should fire at this sample.
@@ -218,13 +245,24 @@ impl Plugin for SubtractiveSynth {
                 }
                 match event {
                     NoteEvent::NoteOn { note, velocity, .. } => {
-                        self.note_on(note, velocity);
+                        if arp_enabled {
+                            self.arp.add_held(note, velocity);
+                        } else {
+                            self.note_on(note, velocity);
+                        }
                         any_active = true;
                     }
                     NoteEvent::NoteOff { note, .. } => {
-                        self.note_off(note);
+                        if arp_enabled {
+                            self.arp.remove_held(note);
+                        } else {
+                            self.note_off(note);
+                        }
                     }
                     NoteEvent::Choke { note, .. } => {
+                        if arp_enabled {
+                            self.arp.remove_held(note);
+                        }
                         for voice in &mut self.voices {
                             if voice.is_active() && voice.note == note {
                                 voice.reset();
@@ -234,6 +272,31 @@ impl Plugin for SubtractiveSynth {
                     _ => {}
                 }
                 next_event = context.next_event();
+            }
+
+            // Per-sample arp stepping.
+            if arp_enabled {
+                let host_beats = if playing {
+                    block_start_beats.map(|b| b + sample_id as f64 * beats_per_sample)
+                } else {
+                    None
+                };
+                let gate = self.params.arp.gate.smoothed.next();
+                let tick = self.arp.tick(
+                    host_beats,
+                    arp_rate_beats,
+                    tempo_bpm,
+                    arp_pattern,
+                    arp_octaves,
+                    gate,
+                );
+                if let Some(n) = tick.note_off {
+                    self.note_off(n);
+                }
+                if let Some((n, v)) = tick.note_on {
+                    self.note_on(n, v);
+                    any_active = true;
+                }
             }
 
             // Fast path: skip everything only when voices are silent AND no

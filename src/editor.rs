@@ -123,6 +123,8 @@ param-slider .value-entry {
 .accent-shm  .section-title { color: #D08FA5; }
 .accent-gap  { border-color: #2F8F8A; }
 .accent-gap  .section-title { color: #4EB8B2; }
+.accent-arp  { border-color: #9B5E3A; }
+.accent-arp  .section-title { color: #C88250; }
 
 /* A labeled parameter row: [Label | ParamSlider] */
 .param-row {
@@ -459,6 +461,7 @@ fn build_fx_row(cx: &mut Context) {
 fn build_bottom_row(cx: &mut Context) {
     HStack::new(cx, |cx| {
         pitch_env_section(cx);
+        arp_section(cx);
         master_section(cx);
     })
     .class("row-equal");
@@ -681,6 +684,16 @@ fn gapper_section(cx: &mut Context) {
         labeled_row(cx, "Duty",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.duty); });
         labeled_row(cx, "Smooth", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.smooth); });
         labeled_row(cx, "Depth",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.depth); });
+    });
+}
+
+fn arp_section(cx: &mut Context) {
+    section_container(cx, "ARPEGGIATOR", "accent-arp", |cx| {
+        labeled_row(cx, "On",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.enabled); });
+        labeled_row(cx, "Pattern", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.pattern); });
+        labeled_row(cx, "Rate",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.rate); });
+        labeled_row(cx, "Octaves", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.octaves); });
+        labeled_row(cx, "Gate",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.gate); });
     });
 }
 

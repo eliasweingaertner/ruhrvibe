@@ -450,9 +450,9 @@ impl DelayFxParams {
     }
 }
 
-/// Host-synced rate for the Gapper.
+/// Host-synced musical rate shared by tempo-synced effects (Gapper, Arp).
 #[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
-pub enum GapperRate {
+pub enum SyncRate {
     #[id = "1_1"]
     #[name = "1/1"]
     Whole,
@@ -494,23 +494,78 @@ pub enum GapperRate {
     ThirtySecond,
 }
 
-impl GapperRate {
+impl SyncRate {
     /// Length of one gate cycle in beats (1 beat = 1 quarter note).
     pub fn beats_per_cycle(self) -> f32 {
         match self {
-            GapperRate::Whole => 4.0,
-            GapperRate::Half => 2.0,
-            GapperRate::HalfDotted => 3.0,
-            GapperRate::HalfTriplet => 4.0 / 3.0,
-            GapperRate::Quarter => 1.0,
-            GapperRate::QuarterDotted => 1.5,
-            GapperRate::QuarterTriplet => 2.0 / 3.0,
-            GapperRate::Eighth => 0.5,
-            GapperRate::EighthDotted => 0.75,
-            GapperRate::EighthTriplet => 1.0 / 3.0,
-            GapperRate::Sixteenth => 0.25,
-            GapperRate::SixteenthTriplet => 1.0 / 6.0,
-            GapperRate::ThirtySecond => 0.125,
+            SyncRate::Whole => 4.0,
+            SyncRate::Half => 2.0,
+            SyncRate::HalfDotted => 3.0,
+            SyncRate::HalfTriplet => 4.0 / 3.0,
+            SyncRate::Quarter => 1.0,
+            SyncRate::QuarterDotted => 1.5,
+            SyncRate::QuarterTriplet => 2.0 / 3.0,
+            SyncRate::Eighth => 0.5,
+            SyncRate::EighthDotted => 0.75,
+            SyncRate::EighthTriplet => 1.0 / 3.0,
+            SyncRate::Sixteenth => 0.25,
+            SyncRate::SixteenthTriplet => 1.0 / 6.0,
+            SyncRate::ThirtySecond => 0.125,
+        }
+    }
+}
+
+/// Note-order pattern for the arpeggiator.
+#[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ArpPattern {
+    #[id = "up"]
+    #[name = "Up"]
+    Up,
+    #[id = "down"]
+    #[name = "Down"]
+    Down,
+    #[id = "updown"]
+    #[name = "Up/Down"]
+    UpDown,
+    #[id = "random"]
+    #[name = "Random"]
+    Random,
+    #[id = "asplayed"]
+    #[name = "As Played"]
+    AsPlayed,
+}
+
+/// Parameters for the host-synced arpeggiator.
+#[derive(Params)]
+pub struct ArpParams {
+    #[id = "pat"]
+    pub pattern: EnumParam<ArpPattern>,
+    #[id = "rate"]
+    pub rate: EnumParam<SyncRate>,
+    #[id = "oct"]
+    pub octaves: IntParam,
+    #[id = "gate"]
+    pub gate: FloatParam,
+    #[id = "on"]
+    pub enabled: BoolParam,
+}
+
+impl ArpParams {
+    fn new() -> Self {
+        Self {
+            pattern: EnumParam::new("Pattern", ArpPattern::Up),
+            rate: EnumParam::new("Rate", SyncRate::Sixteenth),
+            octaves: IntParam::new("Octaves", 1, IntRange::Linear { min: 1, max: 4 })
+                .with_unit(" oct"),
+            gate: FloatParam::new(
+                "Gate",
+                0.5,
+                FloatRange::Linear { min: 0.05, max: 0.95 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+            enabled: BoolParam::new("Enabled", false),
         }
     }
 }
@@ -519,7 +574,7 @@ impl GapperRate {
 #[derive(Params)]
 pub struct GapperFxParams {
     #[id = "rate"]
-    pub rate: EnumParam<GapperRate>,
+    pub rate: EnumParam<SyncRate>,
     #[id = "duty"]
     pub duty: FloatParam,
     #[id = "smooth"]
@@ -533,7 +588,7 @@ pub struct GapperFxParams {
 impl GapperFxParams {
     fn new() -> Self {
         Self {
-            rate: EnumParam::new("Rate", GapperRate::Eighth),
+            rate: EnumParam::new("Rate", SyncRate::Eighth),
             duty: FloatParam::new("Duty", 0.5, FloatRange::Linear { min: 0.05, max: 0.95 })
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
@@ -647,6 +702,9 @@ pub struct SynthParams {
     #[nested(id_prefix = "gap", group = "Gapper")]
     pub gapper: Arc<GapperFxParams>,
 
+    #[nested(id_prefix = "arp", group = "Arpeggiator")]
+    pub arp: Arc<ArpParams>,
+
     #[id = "master_gain"]
     pub master_gain: FloatParam,
 
@@ -670,6 +728,7 @@ impl Default for SynthParams {
             delay: Arc::new(DelayFxParams::new()),
             shimmer: Arc::new(ShimmerFxParams::new()),
             gapper: Arc::new(GapperFxParams::new()),
+            arp: Arc::new(ArpParams::new()),
             master_gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(-6.0),

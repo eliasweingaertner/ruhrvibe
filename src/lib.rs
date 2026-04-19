@@ -9,6 +9,7 @@
 //! - Configurable polyphony (1-32 voices) with voice stealing
 //! - Vizia-based GUI with factory presets (melodic + drums)
 
+mod arp;
 mod envelope;
 mod editor;
 mod fast_math;
