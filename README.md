@@ -48,4 +48,8 @@ cp -r "target/bundled/Ruhrvibe.vst3" "/c/Program Files/Common Files/VST3/"
 
 ## License
 
-ISC. Do whatever you want with it. We won't judge. The synth might, though.
+GPL-3.0-or-later. See [LICENSE.md](LICENSE.md) for the full text.
+
+Translated from lawyer: modify and share freely, but any redistribution has
+to stay GPL-compatible and include source. No quietly bundling this into a
+closed-source commercial product.

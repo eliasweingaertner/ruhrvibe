@@ -430,21 +430,17 @@ Host MIDI ──► Arpeggiator ──► Voice Allocator ──► 16×Voice �
 
 ## Licensing
 
-Ruhrvibe's own source is distributed under the **ISC** license.
+Ruhrvibe is distributed under the **GNU General Public License, version 3 or
+later** (GPL-3.0-or-later). The full license text is in
+[`LICENSE.md`](LICENSE.md).
 
-The plugin depends on [nih-plug](https://github.com/robbert-vdh/nih-plug),
-which is itself ISC — *however*, the nih-plug **VST3 bindings**
-(`nih_export_vst3!`) are licensed under the **GPLv3** because they are
-derived from Steinberg's VST3 SDK. In practical terms:
+In plain terms: you're free to use, modify, and redistribute Ruhrvibe, but
+any redistributed version — including any software that links against it or
+bundles it — must also be released under GPLv3-compatible terms and include
+its source code. This explicitly rules out bundling Ruhrvibe into closed,
+commercial products.
 
-- The **VST3 build** of Ruhrvibe incorporates GPLv3 code and therefore must
-  be distributed under terms compatible with GPLv3.
-- The **CLAP build** is not affected and can be distributed under ISC alone.
-
-If you redistribute the VST3 binary, make the source available under GPLv3
-or a compatible license. If you redistribute only the CLAP build, the ISC
-terms of this repository apply.
-
-Consult the upstream
-[nih-plug LICENSE](https://github.com/robbert-vdh/nih-plug/blob/master/LICENSE)
-for the authoritative terms.
+The plugin also incorporates [nih-plug](https://github.com/robbert-vdh/nih-plug)
+whose VST3 bindings are themselves GPLv3 (derived from Steinberg's VST3 SDK),
+so the VST3 build is GPLv3 top to bottom. The CLAP export is covered by the
+same GPLv3 terms chosen for this project.
