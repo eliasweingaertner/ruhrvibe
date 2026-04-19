@@ -11,7 +11,7 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 
-use crate::params::{ArpPattern, FilterType, SyncRate, SynthParams, Waveform};
+use crate::params::{ArpPattern, ArpRoot, ArpScale, FilterType, SyncRate, SynthParams, Waveform};
 
 #[derive(Clone, Copy)]
 pub struct OscPreset {
@@ -101,6 +101,8 @@ pub struct ArpPreset {
     pub rate: SyncRate,
     pub octaves: i32,
     pub gate: f32,
+    pub scale: ArpScale,
+    pub root: ArpRoot,
     pub enabled: bool,
 }
 
@@ -183,7 +185,15 @@ const fn fx(chorus: ChorusPreset, delay: DelayPreset, shimmer: ShimmerPreset, ga
     FxPreset { chorus, delay, shimmer, gapper }
 }
 const fn ap(pattern: ArpPattern, rate: SyncRate, octaves: i32, gate: f32, enabled: bool) -> ArpPreset {
-    ArpPreset { pattern, rate, octaves, gate, enabled }
+    ArpPreset { pattern, rate, octaves, gate, scale: ArpScale::Off, root: ArpRoot::C, enabled }
+}
+/// Arp preset with an explicit scale + root (opts into scale-locked pitches).
+#[allow(dead_code)]
+const fn aps(
+    pattern: ArpPattern, rate: SyncRate, octaves: i32, gate: f32,
+    scale: ArpScale, root: ArpRoot, enabled: bool,
+) -> ArpPreset {
+    ArpPreset { pattern, rate, octaves, gate, scale, root, enabled }
 }
 
 // All-off defaults.
@@ -1515,6 +1525,8 @@ fn apply_arp(src: &ArpPreset, params: &Arc<SynthParams>, ctx: &dyn GuiContext) {
     set_enum(ctx, &params.arp.rate, src.rate);
     set_int(ctx, &params.arp.octaves, src.octaves);
     set_float(ctx, &params.arp.gate, src.gate);
+    set_enum(ctx, &params.arp.scale, src.scale);
+    set_enum(ctx, &params.arp.root, src.root);
     set_bool(ctx, &params.arp.enabled, src.enabled);
 }
 

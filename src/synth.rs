@@ -222,6 +222,8 @@ impl Plugin for SubtractiveSynth {
         let arp_pattern = self.params.arp.pattern.value();
         let arp_rate_beats = self.params.arp.rate.value().beats_per_cycle();
         let arp_octaves = self.params.arp.octaves.value() as u8;
+        let arp_scale = self.params.arp.scale.value();
+        let arp_root = self.params.arp.root.value();
 
         // Handle enable→disable transition: release any arp-gated note so
         // voices don't get stuck.
@@ -288,6 +290,8 @@ impl Plugin for SubtractiveSynth {
                     tempo_bpm,
                     arp_pattern,
                     arp_octaves,
+                    arp_scale,
+                    arp_root,
                     gate,
                 );
                 if let Some(n) = tick.note_off {

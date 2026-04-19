@@ -515,6 +515,86 @@ impl SyncRate {
     }
 }
 
+/// Musical scale for arpeggiator pitch-snapping. `Off` keeps pitches chromatic.
+#[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ArpScale {
+    #[id = "off"]
+    #[name = "Off"]
+    Off,
+    #[id = "maj"]
+    #[name = "Major"]
+    Major,
+    #[id = "min"]
+    #[name = "Minor"]
+    Minor,
+    #[id = "pma"]
+    #[name = "Penta Maj"]
+    PentaMajor,
+    #[id = "pmi"]
+    #[name = "Penta Min"]
+    PentaMinor,
+    #[id = "dor"]
+    #[name = "Dorian"]
+    Dorian,
+    #[id = "mix"]
+    #[name = "Mixolydian"]
+    Mixolydian,
+    #[id = "blu"]
+    #[name = "Blues"]
+    Blues,
+}
+
+impl ArpScale {
+    /// Bitmask of allowed pitch classes relative to the root (bit i = pc i).
+    pub fn mask(self) -> u16 {
+        match self {
+            // 0, 1, 2, ..., 11
+            ArpScale::Off => 0xFFF,
+            // 0, 2, 4, 5, 7, 9, 11
+            ArpScale::Major => 0b1010_1101_0101,
+            // 0, 2, 3, 5, 7, 8, 10
+            ArpScale::Minor => 0b0101_1010_1101,
+            // 0, 2, 4, 7, 9
+            ArpScale::PentaMajor => 0b0010_1001_0101,
+            // 0, 3, 5, 7, 10
+            ArpScale::PentaMinor => 0b0100_1010_1001,
+            // 0, 2, 3, 5, 7, 9, 10
+            ArpScale::Dorian => 0b0110_1010_1101,
+            // 0, 2, 4, 5, 7, 9, 10
+            ArpScale::Mixolydian => 0b0110_1011_0101,
+            // 0, 3, 5, 6, 7, 10
+            ArpScale::Blues => 0b0100_1111_1001,
+        }
+    }
+}
+
+/// Root pitch class for scale-locked arpeggiation.
+#[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ArpRoot {
+    #[id = "c"]  #[name = "C"]  C,
+    #[id = "cs"] #[name = "C#"] CSharp,
+    #[id = "d"]  #[name = "D"]  D,
+    #[id = "ds"] #[name = "D#"] DSharp,
+    #[id = "e"]  #[name = "E"]  E,
+    #[id = "f"]  #[name = "F"]  F,
+    #[id = "fs"] #[name = "F#"] FSharp,
+    #[id = "g"]  #[name = "G"]  G,
+    #[id = "gs"] #[name = "G#"] GSharp,
+    #[id = "a"]  #[name = "A"]  A,
+    #[id = "as"] #[name = "A#"] ASharp,
+    #[id = "b"]  #[name = "B"]  B,
+}
+
+impl ArpRoot {
+    pub fn semitones(self) -> u8 {
+        match self {
+            ArpRoot::C => 0, ArpRoot::CSharp => 1, ArpRoot::D => 2, ArpRoot::DSharp => 3,
+            ArpRoot::E => 4, ArpRoot::F => 5, ArpRoot::FSharp => 6, ArpRoot::G => 7,
+            ArpRoot::GSharp => 8, ArpRoot::A => 9, ArpRoot::ASharp => 10, ArpRoot::B => 11,
+        }
+    }
+}
+
 /// Note-order pattern for the arpeggiator.
 #[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ArpPattern {
@@ -546,6 +626,10 @@ pub struct ArpParams {
     pub octaves: IntParam,
     #[id = "gate"]
     pub gate: FloatParam,
+    #[id = "scale"]
+    pub scale: EnumParam<ArpScale>,
+    #[id = "root"]
+    pub root: EnumParam<ArpRoot>,
     #[id = "on"]
     pub enabled: BoolParam,
 }
@@ -565,6 +649,8 @@ impl ArpParams {
             .with_smoother(SmoothingStyle::Linear(20.0))
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
+            scale: EnumParam::new("Scale", ArpScale::Off),
+            root: EnumParam::new("Root", ArpRoot::C),
             enabled: BoolParam::new("Enabled", false),
         }
     }

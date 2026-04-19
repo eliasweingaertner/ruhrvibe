@@ -5,7 +5,41 @@
 //! free-runs from tempo alone when the host doesn't expose one. The synth
 //! routes these events to the voice pool the same way it handles MIDI.
 
-use crate::params::ArpPattern;
+use crate::params::{ArpPattern, ArpRoot, ArpScale};
+
+/// Snap `pitch` to the nearest pitch-class allowed by `scale` (rooted at `root`).
+/// Ties go to the lower neighbor. Returns `pitch` unchanged when scale is `Off`.
+fn snap_to_scale(pitch: u8, scale: ArpScale, root: ArpRoot) -> u8 {
+    let mask = scale.mask();
+    if mask == 0xFFF {
+        return pitch;
+    }
+    let root_pc = root.semitones() as i32;
+    let pc = (pitch as i32 - root_pc).rem_euclid(12);
+    if mask & (1 << pc) != 0 {
+        return pitch;
+    }
+    let mut best_delta: i32 = i32::MAX;
+    for candidate in 0..12_i32 {
+        if mask & (1 << candidate) == 0 {
+            continue;
+        }
+        let mut d = candidate - pc;
+        if d > 6 {
+            d -= 12;
+        } else if d < -6 {
+            d += 12;
+        }
+        // Prefer smaller |d|; on exact ties (|d| == |best|), prefer the lower
+        // neighbor (more negative d) — fewer accidentals when snapping in.
+        if d.abs() < best_delta.abs()
+            || (d.abs() == best_delta.abs() && d < best_delta)
+        {
+            best_delta = d;
+        }
+    }
+    (pitch as i32 + best_delta).clamp(0, 127) as u8
+}
 
 const MAX_HELD: usize = 16;
 
@@ -96,7 +130,13 @@ impl Arpeggiator {
         x
     }
 
-    fn pick_note(&mut self, pattern: ArpPattern, octaves: u8) -> Option<(u8, f32)> {
+    fn pick_note(
+        &mut self,
+        pattern: ArpPattern,
+        octaves: u8,
+        scale: ArpScale,
+        root: ArpRoot,
+    ) -> Option<(u8, f32)> {
         let octaves = octaves.max(1) as i32;
         if self.held.is_empty() {
             return None;
@@ -141,8 +181,8 @@ impl Arpeggiator {
         let oct = pos / base_len;
         let note_idx = (pos % base_len) as usize;
         let h = ordered[note_idx];
-        let pitch = (h.note as i32 + oct * 12).clamp(0, 127) as u8;
-        Some((pitch, h.velocity))
+        let raw = (h.note as i32 + oct * 12).clamp(0, 127) as u8;
+        Some((snap_to_scale(raw, scale, root), h.velocity))
     }
 
     /// Advance one sample. Returns any note_on / note_off events to apply.
@@ -153,6 +193,8 @@ impl Arpeggiator {
         bpm: f32,
         pattern: ArpPattern,
         octaves: u8,
+        scale: ArpScale,
+        root: ArpRoot,
         gate: f32,
     ) -> ArpTick {
         let mut out = ArpTick::default();
@@ -201,7 +243,7 @@ impl Arpeggiator {
             if let Some(note) = self.current_playing.take() {
                 out.note_off = Some(note);
             }
-            if let Some((n, v)) = self.pick_note(pattern, octaves) {
+            if let Some((n, v)) = self.pick_note(pattern, octaves, scale, root) {
                 self.current_playing = Some(n);
                 self.gate_samples_remaining = gate_samples.max(1);
                 out.note_on = Some((n, v));
