@@ -17,7 +17,7 @@ const WAVEFORM_LABELS: &[&str] = &["Sine", "Saw", "Squ", "Tri", "Noise"];
 const FILTER_TYPE_LABELS: &[&str] = &["LP", "HP", "BP", "Notch"];
 
 const BASE_WIDTH: u32 = 820;
-const BASE_HEIGHT: u32 = 980;
+const BASE_HEIGHT: u32 = 720;
 
 // Direct overrides of nih_plug_vizia's built-in widget stylesheet. These are
 // simple-type selectors so they override the defaults with equal specificity
@@ -259,6 +259,37 @@ radio-group label:checked {
 radio-group label:checked:hover {
     background-color: #FFB833;
 }
+
+/* Tab bar */
+.tab-bar {
+    height: 26px;
+    col-between: 4px;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+.tab-button {
+    width: 1s;
+    height: 1s;
+    child-space: 1s;
+    font-size: 12;
+    color: #B8BAC0;
+    background-color: #1E2028;
+    border-width: 1px;
+    border-color: #1A1C22;
+    border-radius: 3px;
+}
+.tab-button:hover {
+    background-color: #2A2D36;
+    color: #FFFFFF;
+}
+.tab-button.active {
+    background-color: #F0A526;
+    color: #1E2028;
+    border-color: #B88018;
+}
+.tab-button.active:hover {
+    background-color: #FFB833;
+}
 "#;
 
 #[derive(Lens)]
@@ -271,6 +302,8 @@ struct AppData {
 
     preset_names: Vec<String>,
     selected_preset_idx: usize,
+
+    selected_tab: u32,
 }
 
 #[derive(Debug)]
@@ -279,6 +312,7 @@ enum AppEvent {
     SelectPreset(usize),
     PrevPreset,
     NextPreset,
+    SelectTab(u32),
 }
 
 impl AppData {
@@ -330,6 +364,9 @@ impl Model for AppData {
                     self.apply_selected();
                 }
             }
+            AppEvent::SelectTab(idx) => {
+                self.selected_tab = *idx;
+            }
         });
     }
 }
@@ -360,16 +397,17 @@ pub(crate) fn create(
             selected_category_idx: 0,
             preset_names,
             selected_preset_idx: 0,
+            selected_tab: 0,
         }
         .build(cx);
 
         VStack::new(cx, |cx| {
             build_header(cx);
-            build_osc_row(cx);
-            build_filter_row(cx);
-            build_env_row(cx);
-            build_fx_row(cx);
-            build_bottom_row(cx);
+            build_tab_bar(cx);
+            Binding::new(cx, AppData::selected_tab, |cx, tab| match tab.get(cx) {
+                0 => build_synth_tab(cx),
+                _ => build_fx_tab(cx),
+            });
         })
         .class("root");
 
@@ -448,23 +486,62 @@ fn build_env_row(cx: &mut Context) {
     .class("row-equal");
 }
 
-fn build_fx_row(cx: &mut Context) {
+fn build_bottom_row(cx: &mut Context) {
     HStack::new(cx, |cx| {
-        chorus_section(cx);
-        delay_section(cx);
-        shimmer_section(cx);
-        gapper_section(cx);
+        pitch_env_section(cx);
+        master_section(cx);
     })
     .class("row-equal");
 }
 
-fn build_bottom_row(cx: &mut Context) {
+fn build_tab_bar(cx: &mut Context) {
     HStack::new(cx, |cx| {
-        pitch_env_section(cx);
-        arp_section(cx);
-        master_section(cx);
+        tab_button(cx, "SYNTH", 0);
+        tab_button(cx, "FX & ARP", 1);
     })
-    .class("row-equal");
+    .class("tab-bar");
+}
+
+fn tab_button(cx: &mut Context, label: &str, tab_idx: u32) {
+    Label::new(cx, label)
+        .class("tab-button")
+        .toggle_class(
+            "active",
+            AppData::selected_tab.map(move |t| *t == tab_idx),
+        )
+        .on_press(move |cx| cx.emit(AppEvent::SelectTab(tab_idx)));
+}
+
+fn build_synth_tab(cx: &mut Context) {
+    VStack::new(cx, |cx| {
+        build_osc_row(cx);
+        build_filter_row(cx);
+        build_env_row(cx);
+        build_bottom_row(cx);
+    })
+    .row_between(Pixels(6.0))
+    .height(Auto);
+}
+
+fn build_fx_tab(cx: &mut Context) {
+    VStack::new(cx, |cx| {
+        HStack::new(cx, |cx| {
+            chorus_section(cx);
+            delay_section(cx);
+        })
+        .class("row-equal");
+        HStack::new(cx, |cx| {
+            shimmer_section(cx);
+            gapper_section(cx);
+        })
+        .class("row-equal");
+        HStack::new(cx, |cx| {
+            arp_section(cx);
+        })
+        .class("row-equal");
+    })
+    .row_between(Pixels(6.0))
+    .height(Auto);
 }
 
 #[derive(Clone, Copy)]
