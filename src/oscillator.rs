@@ -19,17 +19,23 @@ pub struct Oscillator {
     triangle_state: f32,
     /// Simple noise PRNG state.
     noise_state: u32,
+    /// Held sample-and-hold noise value — refreshed each time the
+    /// oscillator phase wraps, so noise tracks the note pitch.
+    noise_sample: f32,
 }
 
 impl Oscillator {
     pub fn new_with_seed(sample_rate: f32, seed: u32) -> Self {
-        Self {
+        let mut osc = Self {
             phase: 0.0,
             phase_increment: 0.0,
             inv_sample_rate: 1.0 / sample_rate,
             triangle_state: 0.0,
             noise_state: seed.max(1),
-        }
+            noise_sample: 0.0,
+        };
+        osc.noise_sample = osc.step_noise();
+        osc
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -48,26 +54,28 @@ impl Oscillator {
     pub fn reset(&mut self) {
         self.phase = 0.0;
         self.triangle_state = 0.0;
+        self.noise_sample = self.step_noise();
     }
 
     /// Generate next sample, advancing phase.
+    ///
+    /// Noise uses a sample-and-hold driven by the oscillator's phase, so
+    /// higher notes produce a higher S/H rate (brighter, whiter noise) and
+    /// lower notes sound crunchy/downsampled — noise tracks pitch.
     #[inline]
     pub fn next_sample(&mut self, waveform: Waveform) -> f32 {
-        if waveform == Waveform::Noise {
-            return self.generate_noise();
-        }
-
         let sample = match waveform {
             Waveform::Sine => self.generate_sine(),
             Waveform::Saw => self.generate_saw(),
             Waveform::Square => self.generate_square(),
             Waveform::Triangle => self.generate_triangle(),
-            Waveform::Noise => unreachable!(),
+            Waveform::Noise => self.noise_sample,
         };
 
         self.phase += self.phase_increment;
         if self.phase >= 1.0 {
             self.phase -= 1.0;
+            self.noise_sample = self.step_noise();
         }
 
         sample
@@ -107,8 +115,9 @@ impl Oscillator {
         naive + blep_up - blep_down
     }
 
+    /// xorshift32 step, returned as a float in [-1, 1].
     #[inline]
-    fn generate_noise(&mut self) -> f32 {
+    fn step_noise(&mut self) -> f32 {
         let mut x = self.noise_state;
         x ^= x << 13;
         x ^= x >> 17;
