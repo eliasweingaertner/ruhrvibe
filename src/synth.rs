@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::fx::chorus::Chorus;
 use crate::fx::delay::Delay;
+use crate::fx::gapper::Gapper;
 use crate::fx::shimmer::Shimmer;
 use crate::params::{FilterParams, OscParams, SynthParams};
 use crate::voice::{
@@ -26,6 +27,7 @@ pub struct SubtractiveSynth {
     chorus: Chorus,
     delay: Delay,
     shimmer: Shimmer,
+    gapper: Gapper,
     sample_rate: f32,
 }
 
@@ -39,6 +41,7 @@ impl Default for SubtractiveSynth {
             chorus: Chorus::new(sample_rate),
             delay: Delay::new(sample_rate),
             shimmer: Shimmer::new(sample_rate),
+            gapper: Gapper::new(sample_rate),
             sample_rate,
         }
     }
@@ -169,6 +172,7 @@ impl Plugin for SubtractiveSynth {
         self.chorus.set_sample_rate(self.sample_rate);
         self.delay.set_sample_rate(self.sample_rate);
         self.shimmer.set_sample_rate(self.sample_rate);
+        self.gapper.set_sample_rate(self.sample_rate);
         true
     }
 
@@ -179,6 +183,7 @@ impl Plugin for SubtractiveSynth {
         self.chorus.reset();
         self.delay.reset();
         self.shimmer.reset();
+        self.gapper.reset();
     }
 
     fn process(
@@ -191,7 +196,16 @@ impl Plugin for SubtractiveSynth {
         let chorus_enabled = self.params.chorus.enabled.value();
         let delay_enabled = self.params.delay.enabled.value();
         let shimmer_enabled = self.params.shimmer.enabled.value();
-        let fx_active = chorus_enabled || delay_enabled || shimmer_enabled;
+        let gapper_enabled = self.params.gapper.enabled.value();
+        let fx_active = chorus_enabled || delay_enabled || shimmer_enabled || gapper_enabled;
+
+        // Transport info for host-synced effects (captured once per block).
+        let transport = context.transport();
+        let tempo_bpm = transport.tempo.unwrap_or(120.0) as f32;
+        let block_start_beats = transport.pos_beats();
+        let playing = transport.playing;
+        let beats_per_sample = tempo_bpm as f64 / 60.0 / self.sample_rate as f64;
+        let gapper_rate_beats = self.params.gapper.rate.value().beats_per_cycle();
 
         let mut next_event = context.next_event();
         let mut any_active = self.active_voice_count(max_voices) > 0 || next_event.is_some();
@@ -294,6 +308,29 @@ impl Plugin for SubtractiveSynth {
                 let feedback = self.params.shimmer.feedback.smoothed.next();
                 let mix = self.params.shimmer.mix.smoothed.next();
                 let (l, r) = self.shimmer.process(mix_l, mix_r, time_ms, feedback, mix);
+                mix_l = l;
+                mix_r = r;
+            }
+            if gapper_enabled {
+                let duty = self.params.gapper.duty.smoothed.next();
+                let smooth = self.params.gapper.smooth.smoothed.next();
+                let depth = self.params.gapper.depth.smoothed.next();
+                let host_beats = if playing {
+                    block_start_beats
+                        .map(|b| b + sample_id as f64 * beats_per_sample)
+                } else {
+                    None
+                };
+                let (l, r) = self.gapper.process(
+                    mix_l,
+                    mix_r,
+                    host_beats,
+                    gapper_rate_beats,
+                    tempo_bpm,
+                    duty,
+                    smooth,
+                    depth,
+                );
                 mix_l = l;
                 mix_r = r;
             }

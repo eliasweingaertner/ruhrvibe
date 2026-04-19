@@ -121,6 +121,8 @@ param-slider .value-entry {
 .accent-dly  .section-title { color: #A78FC8; }
 .accent-shm  { border-color: #A86B85; }
 .accent-shm  .section-title { color: #D08FA5; }
+.accent-gap  { border-color: #2F8F8A; }
+.accent-gap  .section-title { color: #4EB8B2; }
 
 /* A labeled parameter row: [Label | ParamSlider] */
 .param-row {
@@ -449,6 +451,7 @@ fn build_fx_row(cx: &mut Context) {
         chorus_section(cx);
         delay_section(cx);
         shimmer_section(cx);
+        gapper_section(cx);
     })
     .class("row-equal");
 }
@@ -668,6 +671,16 @@ fn shimmer_section(cx: &mut Context) {
         labeled_row(cx, "Time",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.time_ms); });
         labeled_row(cx, "Feedback", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.feedback); });
         labeled_row(cx, "Mix",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.mix); });
+    });
+}
+
+fn gapper_section(cx: &mut Context) {
+    section_container(cx, "GAPPER (HOST-SYNC)", "accent-gap", |cx| {
+        labeled_row(cx, "On",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.enabled); });
+        labeled_row(cx, "Rate",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.rate); });
+        labeled_row(cx, "Duty",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.duty); });
+        labeled_row(cx, "Smooth", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.smooth); });
+        labeled_row(cx, "Depth",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.depth); });
     });
 }
 

@@ -450,6 +450,115 @@ impl DelayFxParams {
     }
 }
 
+/// Host-synced rate for the Gapper.
+#[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum GapperRate {
+    #[id = "1_1"]
+    #[name = "1/1"]
+    Whole,
+    #[id = "1_2"]
+    #[name = "1/2"]
+    Half,
+    #[id = "1_2d"]
+    #[name = "1/2 D"]
+    HalfDotted,
+    #[id = "1_2t"]
+    #[name = "1/2 T"]
+    HalfTriplet,
+    #[id = "1_4"]
+    #[name = "1/4"]
+    Quarter,
+    #[id = "1_4d"]
+    #[name = "1/4 D"]
+    QuarterDotted,
+    #[id = "1_4t"]
+    #[name = "1/4 T"]
+    QuarterTriplet,
+    #[id = "1_8"]
+    #[name = "1/8"]
+    Eighth,
+    #[id = "1_8d"]
+    #[name = "1/8 D"]
+    EighthDotted,
+    #[id = "1_8t"]
+    #[name = "1/8 T"]
+    EighthTriplet,
+    #[id = "1_16"]
+    #[name = "1/16"]
+    Sixteenth,
+    #[id = "1_16t"]
+    #[name = "1/16 T"]
+    SixteenthTriplet,
+    #[id = "1_32"]
+    #[name = "1/32"]
+    ThirtySecond,
+}
+
+impl GapperRate {
+    /// Length of one gate cycle in beats (1 beat = 1 quarter note).
+    pub fn beats_per_cycle(self) -> f32 {
+        match self {
+            GapperRate::Whole => 4.0,
+            GapperRate::Half => 2.0,
+            GapperRate::HalfDotted => 3.0,
+            GapperRate::HalfTriplet => 4.0 / 3.0,
+            GapperRate::Quarter => 1.0,
+            GapperRate::QuarterDotted => 1.5,
+            GapperRate::QuarterTriplet => 2.0 / 3.0,
+            GapperRate::Eighth => 0.5,
+            GapperRate::EighthDotted => 0.75,
+            GapperRate::EighthTriplet => 1.0 / 3.0,
+            GapperRate::Sixteenth => 0.25,
+            GapperRate::SixteenthTriplet => 1.0 / 6.0,
+            GapperRate::ThirtySecond => 0.125,
+        }
+    }
+}
+
+/// Parameters for the host-synced rhythmic gate.
+#[derive(Params)]
+pub struct GapperFxParams {
+    #[id = "rate"]
+    pub rate: EnumParam<GapperRate>,
+    #[id = "duty"]
+    pub duty: FloatParam,
+    #[id = "smooth"]
+    pub smooth: FloatParam,
+    #[id = "depth"]
+    pub depth: FloatParam,
+    #[id = "on"]
+    pub enabled: BoolParam,
+}
+
+impl GapperFxParams {
+    fn new() -> Self {
+        Self {
+            rate: EnumParam::new("Rate", GapperRate::Eighth),
+            duty: FloatParam::new("Duty", 0.5, FloatRange::Linear { min: 0.05, max: 0.95 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            smooth: FloatParam::new(
+                "Smooth",
+                0.1,
+                FloatRange::Linear { min: 0.0, max: 0.5 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+            depth: FloatParam::new(
+                "Depth",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+            enabled: BoolParam::new("Enabled", false),
+        }
+    }
+}
+
 /// Parameters for the shimmer delay.
 #[derive(Params)]
 pub struct ShimmerFxParams {
@@ -535,6 +644,9 @@ pub struct SynthParams {
     #[nested(id_prefix = "shim", group = "Shimmer")]
     pub shimmer: Arc<ShimmerFxParams>,
 
+    #[nested(id_prefix = "gap", group = "Gapper")]
+    pub gapper: Arc<GapperFxParams>,
+
     #[id = "master_gain"]
     pub master_gain: FloatParam,
 
@@ -557,6 +669,7 @@ impl Default for SynthParams {
             chorus: Arc::new(ChorusFxParams::new()),
             delay: Arc::new(DelayFxParams::new()),
             shimmer: Arc::new(ShimmerFxParams::new()),
+            gapper: Arc::new(GapperFxParams::new()),
             master_gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(-6.0),
