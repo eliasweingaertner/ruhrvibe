@@ -13,6 +13,7 @@ mod envelope;
 mod editor;
 mod fast_math;
 mod filter;
+mod fx;
 mod oscillator;
 mod params;
 mod presets;

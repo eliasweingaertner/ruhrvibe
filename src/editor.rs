@@ -17,7 +17,7 @@ const WAVEFORM_LABELS: &[&str] = &["Sine", "Saw", "Squ", "Tri", "Noise"];
 const FILTER_TYPE_LABELS: &[&str] = &["LP", "HP", "BP", "Notch"];
 
 const BASE_WIDTH: u32 = 820;
-const BASE_HEIGHT: u32 = 820;
+const BASE_HEIGHT: u32 = 980;
 
 // Direct overrides of nih_plug_vizia's built-in widget stylesheet. These are
 // simple-type selectors so they override the defaults with equal specificity
@@ -115,6 +115,10 @@ param-slider .value-entry {
 .accent-pe   .section-title { color: #95B0C8; }
 .accent-mst  { border-color: #B08823; }
 .accent-mst  .section-title { color: #D0A028; }
+.accent-chr  { border-color: #6B8E6F; }
+.accent-chr  .section-title { color: #8FBF95; }
+.accent-dly  { border-color: #7D6BA0; }
+.accent-dly  .section-title { color: #A78FC8; }
 
 /* A labeled parameter row: [Label | ParamSlider] */
 .param-row {
@@ -358,6 +362,7 @@ pub(crate) fn create(
             build_osc_row(cx);
             build_filter_row(cx);
             build_env_row(cx);
+            build_fx_row(cx);
             build_bottom_row(cx);
         })
         .class("root");
@@ -433,6 +438,14 @@ fn build_env_row(cx: &mut Context) {
         env_section(cx, "AMP ENVELOPE", "accent-amp", EnvSel::Amp);
         env_section(cx, "FILTER 1 ENV", "accent-fe1", EnvSel::F1);
         env_section(cx, "FILTER 2 ENV", "accent-fe2", EnvSel::F2);
+    })
+    .class("row-equal");
+}
+
+fn build_fx_row(cx: &mut Context) {
+    HStack::new(cx, |cx| {
+        chorus_section(cx);
+        delay_section(cx);
     })
     .class("row-equal");
 }
@@ -624,6 +637,25 @@ fn master_section(cx: &mut Context) {
     section_container(cx, "MASTER", "accent-mst", |cx| {
         labeled_row(cx, "Gain",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.master_gain); });
         labeled_row(cx, "Voices", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.num_voices); });
+    });
+}
+
+fn chorus_section(cx: &mut Context) {
+    section_container(cx, "CHORUS", "accent-chr", |cx| {
+        labeled_row(cx, "On",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.enabled); });
+        labeled_row(cx, "Rate",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.rate); });
+        labeled_row(cx, "Depth", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.depth); });
+        labeled_row(cx, "Mix",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.mix); });
+    });
+}
+
+fn delay_section(cx: &mut Context) {
+    section_container(cx, "DELAY (PING-PONG)", "accent-dly", |cx| {
+        labeled_row(cx, "On",       |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.enabled); });
+        labeled_row(cx, "Time",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.time_ms); });
+        labeled_row(cx, "Feedback", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.feedback); });
+        labeled_row(cx, "Tone",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.tone); });
+        labeled_row(cx, "Mix",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.mix); });
     });
 }
 

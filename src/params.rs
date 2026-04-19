@@ -354,6 +354,102 @@ impl PitchEnvParams {
     }
 }
 
+/// Parameters for the stereo chorus effect.
+#[derive(Params)]
+pub struct ChorusFxParams {
+    #[id = "rate"]
+    pub rate: FloatParam,
+    #[id = "depth"]
+    pub depth: FloatParam,
+    #[id = "mix"]
+    pub mix: FloatParam,
+    #[id = "on"]
+    pub enabled: BoolParam,
+}
+
+impl ChorusFxParams {
+    fn new() -> Self {
+        Self {
+            rate: FloatParam::new(
+                "Rate",
+                0.5,
+                FloatRange::Skewed {
+                    min: 0.05,
+                    max: 10.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(20.0))
+            .with_unit(" Hz")
+            .with_value_to_string(Arc::new(|v| format!("{:.2} Hz", v))),
+            depth: FloatParam::new("Depth", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            mix: FloatParam::new("Mix", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            enabled: BoolParam::new("Enabled", false),
+        }
+    }
+}
+
+/// Parameters for the stereo ping-pong delay.
+#[derive(Params)]
+pub struct DelayFxParams {
+    #[id = "time"]
+    pub time_ms: FloatParam,
+    #[id = "fb"]
+    pub feedback: FloatParam,
+    #[id = "tone"]
+    pub tone: FloatParam,
+    #[id = "mix"]
+    pub mix: FloatParam,
+    #[id = "on"]
+    pub enabled: BoolParam,
+}
+
+impl DelayFxParams {
+    fn new() -> Self {
+        Self {
+            time_ms: FloatParam::new(
+                "Time",
+                350.0,
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 2000.0,
+                    factor: FloatRange::skew_factor(-1.5),
+                },
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(30.0))
+            .with_unit(" ms")
+            .with_value_to_string(Arc::new(|v| format!("{:.0} ms", v))),
+            feedback: FloatParam::new(
+                "Feedback",
+                0.35,
+                FloatRange::Linear { min: 0.0, max: 0.95 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+            tone: FloatParam::new(
+                "Tone",
+                0.6,
+                FloatRange::Linear { min: 0.05, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+            mix: FloatParam::new("Mix", 0.25, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            enabled: BoolParam::new("Enabled", false),
+        }
+    }
+}
+
 /// Top-level plugin parameters.
 #[derive(Params)]
 pub struct SynthParams {
@@ -385,6 +481,12 @@ pub struct SynthParams {
     #[nested(id_prefix = "pitchenv", group = "Pitch Envelope")]
     pub pitch_env: Arc<PitchEnvParams>,
 
+    #[nested(id_prefix = "chorus", group = "Chorus")]
+    pub chorus: Arc<ChorusFxParams>,
+
+    #[nested(id_prefix = "delay", group = "Delay")]
+    pub delay: Arc<DelayFxParams>,
+
     #[id = "master_gain"]
     pub master_gain: FloatParam,
 
@@ -404,6 +506,8 @@ impl Default for SynthParams {
             filter1_env: Arc::new(EnvelopeParams::new(0.01, 0.5, 0.5, 0.3)),
             filter2_env: Arc::new(EnvelopeParams::new(0.01, 0.5, 0.5, 0.3)),
             pitch_env: Arc::new(PitchEnvParams::new()),
+            chorus: Arc::new(ChorusFxParams::new()),
+            delay: Arc::new(DelayFxParams::new()),
             master_gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(-6.0),

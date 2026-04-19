@@ -8,6 +8,8 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 
+use crate::fx::chorus::Chorus;
+use crate::fx::delay::Delay;
 use crate::params::{FilterParams, OscParams, SynthParams};
 use crate::voice::{
     EnvelopeVoiceParams, FilterVoiceParams, OscBankPrecomp, OscVoiceParams,
@@ -20,6 +22,8 @@ const MAX_VOICES: usize = 32;
 pub struct SubtractiveSynth {
     params: Arc<SynthParams>,
     voices: Vec<Voice>,
+    chorus: Chorus,
+    delay: Delay,
     sample_rate: f32,
 }
 
@@ -30,6 +34,8 @@ impl Default for SubtractiveSynth {
         Self {
             params: Arc::new(SynthParams::default()),
             voices,
+            chorus: Chorus::new(sample_rate),
+            delay: Delay::new(sample_rate),
             sample_rate,
         }
     }
@@ -157,6 +163,8 @@ impl Plugin for SubtractiveSynth {
             voice.set_sample_rate(self.sample_rate);
             voice.reset();
         }
+        self.chorus.set_sample_rate(self.sample_rate);
+        self.delay.set_sample_rate(self.sample_rate);
         true
     }
 
@@ -164,6 +172,8 @@ impl Plugin for SubtractiveSynth {
         for voice in &mut self.voices {
             voice.reset();
         }
+        self.chorus.reset();
+        self.delay.reset();
     }
 
     fn process(
@@ -173,6 +183,9 @@ impl Plugin for SubtractiveSynth {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let max_voices = (self.params.num_voices.value() as usize).min(MAX_VOICES);
+        let chorus_enabled = self.params.chorus.enabled.value();
+        let delay_enabled = self.params.delay.enabled.value();
+        let fx_active = chorus_enabled || delay_enabled;
 
         let mut next_event = context.next_event();
         let mut any_active = self.active_voice_count(max_voices) > 0 || next_event.is_some();
@@ -203,53 +216,72 @@ impl Plugin for SubtractiveSynth {
                 next_event = context.next_event();
             }
 
-            // Fast path: if no voices are active, output silence and skip
-            // parameter smoothing entirely.
-            if !any_active {
+            // Fast path: skip everything only when voices are silent AND no
+            // FX are active. Delay feedback needs the chain running even on
+            // zero input so tails decay naturally.
+            if !any_active && !fx_active {
                 for sample in channel_samples {
                     *sample = 0.0;
                 }
                 continue;
             }
 
-            // Sample all smoothed parameters once this sample.
-            let osc1 = Self::osc_voice_params(&self.params.osc1);
-            let osc2 = Self::osc_voice_params(&self.params.osc2);
-            let osc1_pre = OscBankPrecomp::compute(&osc1);
-            let osc2_pre = OscBankPrecomp::compute(&osc2);
-            let voice_params = VoiceParams {
-                osc1,
-                osc2,
-                osc1_pre,
-                osc2_pre,
-                filter1: Self::filter_voice_params(&self.params.filter1),
-                filter2: Self::filter_voice_params(&self.params.filter2),
-                amp_env: Self::env_voice_params(&self.params.amp_env),
-                filter1_env: Self::env_voice_params(&self.params.filter1_env),
-                filter2_env: Self::env_voice_params(&self.params.filter2_env),
-                pitch_env: Self::pitch_env_voice_params(&self.params.pitch_env),
-            };
+            // Voice mix.
+            let (mut mix_l, mut mix_r) = (0.0f32, 0.0f32);
             let master_gain = self.params.master_gain.smoothed.next();
+            if any_active {
+                let osc1 = Self::osc_voice_params(&self.params.osc1);
+                let osc2 = Self::osc_voice_params(&self.params.osc2);
+                let osc1_pre = OscBankPrecomp::compute(&osc1);
+                let osc2_pre = OscBankPrecomp::compute(&osc2);
+                let voice_params = VoiceParams {
+                    osc1,
+                    osc2,
+                    osc1_pre,
+                    osc2_pre,
+                    filter1: Self::filter_voice_params(&self.params.filter1),
+                    filter2: Self::filter_voice_params(&self.params.filter2),
+                    amp_env: Self::env_voice_params(&self.params.amp_env),
+                    filter1_env: Self::env_voice_params(&self.params.filter1_env),
+                    filter2_env: Self::env_voice_params(&self.params.filter2_env),
+                    pitch_env: Self::pitch_env_voice_params(&self.params.pitch_env),
+                };
 
-            // Sum all active voices into a stereo bus.
-            let mut mix_l = 0.0f32;
-            let mut mix_r = 0.0f32;
-            let mut found_active = false;
-            for voice in self.voices.iter_mut().take(max_voices) {
-                if voice.is_active() {
-                    let (l, r) = voice.process(&voice_params);
-                    mix_l += l;
-                    mix_r += r;
-                    found_active = true;
+                let mut found_active = false;
+                for voice in self.voices.iter_mut().take(max_voices) {
+                    if voice.is_active() {
+                        let (l, r) = voice.process(&voice_params);
+                        mix_l += l;
+                        mix_r += r;
+                        found_active = true;
+                    }
+                }
+                mix_l *= master_gain;
+                mix_r *= master_gain;
+
+                if !found_active {
+                    any_active = false;
                 }
             }
-            mix_l *= master_gain;
-            mix_r *= master_gain;
 
-            // If no voices were actually active this sample, mark for fast
-            // path on subsequent samples (until next MIDI event).
-            if !found_active {
-                any_active = false;
+            // FX chain (chorus → delay). Always runs its smoothers and DSP
+            // when enabled so tails continue after voices release.
+            if chorus_enabled {
+                let rate = self.params.chorus.rate.smoothed.next();
+                let depth = self.params.chorus.depth.smoothed.next();
+                let mix = self.params.chorus.mix.smoothed.next();
+                let (l, r) = self.chorus.process(mix_l, mix_r, rate, depth, mix);
+                mix_l = l;
+                mix_r = r;
+            }
+            if delay_enabled {
+                let time_ms = self.params.delay.time_ms.smoothed.next();
+                let feedback = self.params.delay.feedback.smoothed.next();
+                let tone = self.params.delay.tone.smoothed.next();
+                let mix = self.params.delay.mix.smoothed.next();
+                let (l, r) = self.delay.process(mix_l, mix_r, time_ms, feedback, tone, mix);
+                mix_l = l;
+                mix_r = r;
             }
 
             for (ch, sample) in channel_samples.into_iter().enumerate() {
