@@ -45,10 +45,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libx11-dev libxcb1-dev libxcb-icccm4-dev libxcb-dri2-0-dev \
-            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxcursor-dev libxkbcommon-dev libgl1-mesa-dev libasound2-dev \
-            libjack-jackd2-dev
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-icccm4-dev \
+            libxcb-dri2-0-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxcursor-dev libxkbcommon-dev \
+            libgl1-mesa-dev libasound2-dev libjack-jackd2-dev
 
       - name: Build bundle (Linux / Windows)
         if: matrix.os != 'macos-latest'
@@ -64,3 +64,43 @@ jobs:
           name: ${{ matrix.artifact }}
           path: target/bundled/
           if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package per-platform zips
+        run: |
+          mkdir -p release
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            (cd "$name" && zip -r "../../release/${name}.zip" .)
+          done
+          ls -lh ../release
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          body: |
+            Automated rolling build from commit ${{ github.sha }}.
+
+            Contains VST3 and CLAP bundles for Linux (x86_64), Windows
+            (x86_64), and macOS (universal: x86_64 + aarch64). Download
+            the zip for your platform and install the bundles in the
+            usual plugin folder.
+
+            This is a pre-release — not a stable tagged release.
+          prerelease: true
+          files: release/*.zip
