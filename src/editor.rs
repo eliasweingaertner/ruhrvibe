@@ -17,7 +17,7 @@ const WAVEFORM_LABELS: &[&str] = &["Sine", "Saw", "Squ", "Tri", "Noise"];
 const FILTER_TYPE_LABELS: &[&str] = &["LP", "HP", "BP", "Notch"];
 
 const BASE_WIDTH: u32 = 820;
-const BASE_HEIGHT: u32 = 770;
+const BASE_HEIGHT: u32 = 820;
 
 // Direct overrides of nih_plug_vizia's built-in widget stylesheet. These are
 // simple-type selectors so they override the defaults with equal specificity
@@ -773,6 +773,8 @@ fn arp_section(cx: &mut Context) {
         labeled_row(cx, "Gate",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.gate); });
         labeled_row(cx, "Scale",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.scale); });
         labeled_row(cx, "Root",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.root); });
+        labeled_row(cx, "Walk",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.walk); });
+        labeled_row(cx, "Step",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.arp.step); });
     });
 }
 

@@ -103,6 +103,8 @@ pub struct ArpPreset {
     pub gate: f32,
     pub scale: ArpScale,
     pub root: ArpRoot,
+    pub walk: bool,
+    pub step: i32,
     pub enabled: bool,
 }
 
@@ -185,7 +187,11 @@ const fn fx(chorus: ChorusPreset, delay: DelayPreset, shimmer: ShimmerPreset, ga
     FxPreset { chorus, delay, shimmer, gapper }
 }
 const fn ap(pattern: ArpPattern, rate: SyncRate, octaves: i32, gate: f32, enabled: bool) -> ArpPreset {
-    ArpPreset { pattern, rate, octaves, gate, scale: ArpScale::Off, root: ArpRoot::C, enabled }
+    ArpPreset {
+        pattern, rate, octaves, gate,
+        scale: ArpScale::Off, root: ArpRoot::C,
+        walk: false, step: 1, enabled,
+    }
 }
 /// Arp preset with an explicit scale + root (opts into scale-locked pitches).
 #[allow(dead_code)]
@@ -193,7 +199,15 @@ const fn aps(
     pattern: ArpPattern, rate: SyncRate, octaves: i32, gate: f32,
     scale: ArpScale, root: ArpRoot, enabled: bool,
 ) -> ArpPreset {
-    ArpPreset { pattern, rate, octaves, gate, scale, root, enabled }
+    ArpPreset { pattern, rate, octaves, gate, scale, root, walk: false, step: 1, enabled }
+}
+/// Arp preset in scale-walk mode: one held note expands into the scale.
+#[allow(dead_code)]
+const fn apw(
+    pattern: ArpPattern, rate: SyncRate, octaves: i32, gate: f32,
+    scale: ArpScale, root: ArpRoot, step: i32, enabled: bool,
+) -> ArpPreset {
+    ArpPreset { pattern, rate, octaves, gate, scale, root, walk: true, step, enabled }
 }
 
 // All-off defaults.
@@ -1316,6 +1330,50 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         arp: aps(ArpPattern::UpDown, SyncRate::Eighth, 2, 0.7,
                  ArpScale::Minor, ArpRoot::E, true),
     },
+    // --- Scale-walk arps (one held key expands into the scale) ---
+    Preset { category: "Arpeggios", name: "Walk Up Major",
+        // Hold ANY single key → plays that pitch walking up C Major in steps.
+        osc1: o(SQR, 0.7, -3.0, 0, true, 1, 0.0),
+        osc2: o(TRI, 0.35, 3.0, 1, true, 1, 0.0),
+        filter1: f(LP, 3800.0, 0.3, 1.0, 0.55, true),
+        filter2: FOFF,
+        amp_env: e(0.001, 0.2, 0.0, 0.15),
+        filter1_env: e(0.001, 0.12, 0.0, 0.1),
+        filter2_env: EOFF, pitch_env: POFF,
+        master_gain_db: -7.0,
+        fx: fx(CHR_OFF, dl(333.0, 0.35, 0.6, 0.2, true), SHM_OFF, GAP_OFF),
+        arp: apw(ArpPattern::Up, SyncRate::Sixteenth, 2, 0.45,
+                 ArpScale::Major, ArpRoot::C, 1, true),
+    },
+    Preset { category: "Arpeggios", name: "Walk Thirds Penta",
+        // Hold one key → walks Penta Minor A in thirds (cycle of thirds).
+        osc1: o(TRI, 0.75, 0.0, 0, true, 1, 0.0),
+        osc2: o(SIN, 0.4, 0.0, 1, true, 1, 0.0),
+        filter1: f(LP, 4200.0, 0.25, 1.0, 0.4, true),
+        filter2: FOFF,
+        amp_env: e(0.002, 0.25, 0.0, 0.2),
+        filter1_env: e(0.002, 0.15, 0.0, 0.1),
+        filter2_env: EOFF, pitch_env: POFF,
+        master_gain_db: -8.0,
+        fx: fx(ch(0.3, 0.4, 0.25, true), dl(375.0, 0.35, 0.6, 0.25, true),
+               sh(500.0, 0.4, 0.28, true), GAP_OFF),
+        arp: apw(ArpPattern::Up, SyncRate::Sixteenth, 2, 0.5,
+                 ArpScale::PentaMinor, ArpRoot::A, 2, true),
+    },
+    Preset { category: "Arpeggios", name: "Walk Dorian Flow",
+        // Hold one key → UpDown walk over D Dorian, smooth jazz-minor motion.
+        osc1: o(SAW, 0.6, -5.0, 0, true, 3, 10.0),
+        osc2: o(SAW, 0.55, 5.0, 0, true, 3, 10.0),
+        filter1: f(LP, 2600.0, 0.35, 1.1, 0.45, true),
+        filter2: FOFF,
+        amp_env: e(0.005, 0.3, 0.2, 0.25),
+        filter1_env: e(0.005, 0.3, 0.25, 0.2),
+        filter2_env: EOFF, pitch_env: POFF,
+        master_gain_db: -8.0,
+        fx: fx(ch(0.35, 0.5, 0.3, true), dl(333.0, 0.35, 0.6, 0.22, true), SHM_OFF, GAP_OFF),
+        arp: apw(ArpPattern::UpDown, SyncRate::Eighth, 2, 0.55,
+                 ArpScale::Dorian, ArpRoot::D, 1, true),
+    },
 
     // ===================================================================
     // SOUNDSCAPES
@@ -1613,6 +1671,8 @@ fn apply_arp(src: &ArpPreset, params: &Arc<SynthParams>, ctx: &dyn GuiContext) {
     set_float(ctx, &params.arp.gate, src.gate);
     set_enum(ctx, &params.arp.scale, src.scale);
     set_enum(ctx, &params.arp.root, src.root);
+    set_bool(ctx, &params.arp.walk, src.walk);
+    set_int(ctx, &params.arp.step, src.step);
     set_bool(ctx, &params.arp.enabled, src.enabled);
 }
 

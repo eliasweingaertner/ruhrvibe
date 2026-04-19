@@ -7,6 +7,21 @@
 
 use crate::params::{ArpPattern, ArpRoot, ArpScale};
 
+/// Sorted semitone offsets (from root) of the scale's pitch classes.
+/// `Off` walks chromatically (12 notes per octave).
+fn scale_degrees(scale: ArpScale) -> &'static [u8] {
+    match scale {
+        ArpScale::Off        => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        ArpScale::Major      => &[0, 2, 4, 5, 7, 9, 11],
+        ArpScale::Minor      => &[0, 2, 3, 5, 7, 8, 10],
+        ArpScale::PentaMajor => &[0, 2, 4, 7, 9],
+        ArpScale::PentaMinor => &[0, 3, 5, 7, 10],
+        ArpScale::Dorian     => &[0, 2, 3, 5, 7, 9, 10],
+        ArpScale::Mixolydian => &[0, 2, 4, 5, 7, 9, 10],
+        ArpScale::Blues      => &[0, 3, 5, 6, 7, 10],
+    }
+}
+
 /// Snap `pitch` to the nearest pitch-class allowed by `scale` (rooted at `root`).
 /// Ties go to the lower neighbor. Returns `pitch` unchanged when scale is `Off`.
 fn snap_to_scale(pitch: u8, scale: ArpScale, root: ArpRoot) -> u8 {
@@ -130,28 +145,10 @@ impl Arpeggiator {
         x
     }
 
-    fn pick_note(
-        &mut self,
-        pattern: ArpPattern,
-        octaves: u8,
-        scale: ArpScale,
-        root: ArpRoot,
-    ) -> Option<(u8, f32)> {
-        let octaves = octaves.max(1) as i32;
-        if self.held.is_empty() {
-            return None;
-        }
-
-        let mut ordered: Vec<HeldNote> = self.held.clone();
+    /// Advance the pattern counter by one step and return the position in
+    /// `[0, total)` that should be picked for this tick.
+    fn pattern_pos(&mut self, pattern: ArpPattern, total: i32) -> i32 {
         match pattern {
-            ArpPattern::AsPlayed | ArpPattern::Random => {}
-            _ => ordered.sort_by_key(|h| h.note),
-        }
-
-        let base_len = ordered.len() as i32;
-        let total = base_len * octaves;
-
-        let pos = match pattern {
             ArpPattern::Up | ArpPattern::AsPlayed => {
                 let p = self.step_idx.rem_euclid(total as i64) as i32;
                 self.step_idx = self.step_idx.wrapping_add(1);
@@ -176,13 +173,74 @@ impl Arpeggiator {
                 self.step_idx = self.step_idx.wrapping_add(1);
                 (self.next_rand() % (total as u32)) as i32
             }
-        };
+        }
+    }
 
-        let oct = pos / base_len;
-        let note_idx = (pos % base_len) as usize;
-        let h = ordered[note_idx];
-        let raw = (h.note as i32 + oct * 12).clamp(0, 127) as u8;
-        Some((snap_to_scale(raw, scale, root), h.velocity))
+    fn pick_note(
+        &mut self,
+        pattern: ArpPattern,
+        octaves: u8,
+        scale: ArpScale,
+        root: ArpRoot,
+        walk: bool,
+        step: u8,
+    ) -> Option<(u8, f32)> {
+        if self.held.is_empty() {
+            return None;
+        }
+        let octaves = octaves.max(1) as i32;
+
+        if walk {
+            // Scale-walk mode: one held note expands into a scale walk.
+            // Starting pitch = lowest held note, snapped to the scale.
+            // Stride `step` scale-degrees per tick.
+            let degrees = scale_degrees(scale);
+            let scale_len = degrees.len() as i32;
+            let total = scale_len * octaves;
+            if total <= 0 {
+                return None;
+            }
+            let step = step.max(1) as i32;
+
+            let anchor = self
+                .held
+                .iter()
+                .min_by_key(|h| h.note)
+                .copied()
+                .unwrap();
+            let start = snap_to_scale(anchor.note, scale, root) as i32;
+            let root_pc = root.semitones() as i32;
+            let start_pc = (start - root_pc).rem_euclid(12);
+            let start_i = degrees
+                .iter()
+                .position(|&d| d as i32 == start_pc)
+                .unwrap_or(0) as i32;
+            let start_oct_base = start - degrees[start_i as usize] as i32;
+
+            let pos = self.pattern_pos(pattern, total);
+            let walk_idx = (pos * step).rem_euclid(total);
+            let abs_deg = start_i + walk_idx;
+            let oct_off = abs_deg.div_euclid(scale_len);
+            let deg_in_scale = abs_deg.rem_euclid(scale_len) as usize;
+            let semis_above_root = oct_off * 12 + degrees[deg_in_scale] as i32;
+            let pitch = (start_oct_base + semis_above_root).clamp(0, 127) as u8;
+            Some((pitch, anchor.velocity))
+        } else {
+            // Held-chord mode (original behaviour): cycle through held notes.
+            let mut ordered: Vec<HeldNote> = self.held.clone();
+            match pattern {
+                ArpPattern::AsPlayed | ArpPattern::Random => {}
+                _ => ordered.sort_by_key(|h| h.note),
+            }
+            let base_len = ordered.len() as i32;
+            let total = base_len * octaves;
+            let pos = self.pattern_pos(pattern, total);
+            let oct = pos / base_len;
+            let note_idx = (pos % base_len) as usize;
+            let h = ordered[note_idx];
+            let raw = (h.note as i32 + oct * 12).clamp(0, 127) as u8;
+            Some((snap_to_scale(raw, scale, root), h.velocity))
+        }
     }
 
     /// Advance one sample. Returns any note_on / note_off events to apply.
@@ -195,6 +253,8 @@ impl Arpeggiator {
         octaves: u8,
         scale: ArpScale,
         root: ArpRoot,
+        walk: bool,
+        step: u8,
         gate: f32,
     ) -> ArpTick {
         let mut out = ArpTick::default();
@@ -243,7 +303,7 @@ impl Arpeggiator {
             if let Some(note) = self.current_playing.take() {
                 out.note_off = Some(note);
             }
-            if let Some((n, v)) = self.pick_note(pattern, octaves, scale, root) {
+            if let Some((n, v)) = self.pick_note(pattern, octaves, scale, root, walk, step) {
                 self.current_playing = Some(n);
                 self.gate_samples_remaining = gate_samples.max(1);
                 out.note_on = Some((n, v));

@@ -630,6 +630,13 @@ pub struct ArpParams {
     pub scale: EnumParam<ArpScale>,
     #[id = "root"]
     pub root: EnumParam<ArpRoot>,
+    /// When on, one held note expands into a scale walk instead of
+    /// cycling through held chord tones. Requires a non-Off scale.
+    #[id = "walk"]
+    pub walk: BoolParam,
+    /// Scale-degree stride per arp tick (1 = seconds, 2 = thirds, 3 = fourths…).
+    #[id = "step"]
+    pub step: IntParam,
     #[id = "on"]
     pub enabled: BoolParam,
 }
@@ -651,6 +658,8 @@ impl ArpParams {
             .with_string_to_value(formatters::s2v_f32_percentage()),
             scale: EnumParam::new("Scale", ArpScale::Off),
             root: EnumParam::new("Root", ArpRoot::C),
+            walk: BoolParam::new("Walk", false),
+            step: IntParam::new("Step", 1, IntRange::Linear { min: 1, max: 7 }),
             enabled: BoolParam::new("Enabled", false),
         }
     }

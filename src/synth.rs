@@ -224,6 +224,8 @@ impl Plugin for SubtractiveSynth {
         let arp_octaves = self.params.arp.octaves.value() as u8;
         let arp_scale = self.params.arp.scale.value();
         let arp_root = self.params.arp.root.value();
+        let arp_walk = self.params.arp.walk.value();
+        let arp_step = self.params.arp.step.value() as u8;
 
         // Handle enable→disable transition: release any arp-gated note so
         // voices don't get stuck.
@@ -292,6 +294,8 @@ impl Plugin for SubtractiveSynth {
                     arp_octaves,
                     arp_scale,
                     arp_root,
+                    arp_walk,
+                    arp_step,
                     gate,
                 );
                 if let Some(n) = tick.note_off {
