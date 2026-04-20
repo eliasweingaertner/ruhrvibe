@@ -32,7 +32,7 @@ LFOs. Wavetables. Modulation matrix. FM. Sidechain. Anything a *professional* sy
 
 **ruhrvibe-demo.wav** — a short rendered demo. Listen before you build.
 
-<audio controls src="ruhrvibe-demo.wav"></audio>
+<video src="ruhrvibe-demo.mp4" controls></video>
 - [**ruhrvibe-demo.xrns**](ruhrvibe-demo.xrns) — the Renoise project that produced it. Open it in Renoise with the plugin installed to poke at how the sounds were made.
 
 ## User guide
