@@ -88,7 +88,13 @@ jobs:
           done
           ls -lh ../release
 
-      - name: Create GitHub release
+      # Create the release as a draft so assets can be uploaded. Repos with
+      # "immutable releases" enabled reject asset uploads once a release is
+      # published, and softprops/action-gh-release publishes immediately when
+      # `draft: false`. Upload first as draft, then flip to published in the
+      # next step.
+      - name: Create draft release with assets
+        id: draft_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
@@ -102,5 +108,14 @@ jobs:
             usual plugin folder.
 
             This is a pre-release — not a stable tagged release.
+          draft: true
           prerelease: true
           files: release/*.zip
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "build-${{ github.run_number }}" \
+            --repo "${{ github.repository }}" \
+            --draft=false
