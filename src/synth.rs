@@ -6,9 +6,11 @@
 //! per sample and passed as scalar values to each voice.
 
 use nih_plug::prelude::*;
+use std::f32::consts::PI;
 use std::sync::Arc;
 
 use crate::arp::Arpeggiator;
+use crate::filter::SvfCoeffs;
 use crate::fx::chorus::Chorus;
 use crate::fx::delay::Delay;
 use crate::fx::gapper::Gapper;
@@ -34,6 +36,20 @@ pub struct SubtractiveSynth {
     /// disable transitions so a final note_off can flush any held voice.
     arp_was_enabled: bool,
     sample_rate: f32,
+    /// `π / sample_rate`, recomputed on sample-rate change and handed to
+    /// voices so SVF coefficient recomputation is `tan(pi_over_fs * fc)`
+    /// instead of `tan(pi * fc / fs)`.
+    pi_over_fs: f32,
+    /// Upper cutoff limit (~Nyquist) — `0.49 * sample_rate`.
+    nyquist: f32,
+    /// Cached `OscBankPrecomp` + the source params it was computed from.
+    /// `OscBankPrecomp::compute` runs several `exp2_fast` and trig calls per
+    /// unison voice; caching lets the common "smoothers idle" case reuse the
+    /// previous sample's result.
+    cached_osc1_params: Option<OscVoiceParams>,
+    cached_osc1_pre: Option<OscBankPrecomp>,
+    cached_osc2_params: Option<OscVoiceParams>,
+    cached_osc2_pre: Option<OscBankPrecomp>,
 }
 
 impl Default for SubtractiveSynth {
@@ -50,6 +66,12 @@ impl Default for SubtractiveSynth {
             arp: Arpeggiator::new(sample_rate),
             arp_was_enabled: false,
             sample_rate,
+            pi_over_fs: PI / sample_rate,
+            nyquist: 0.49 * sample_rate,
+            cached_osc1_params: None,
+            cached_osc1_pre: None,
+            cached_osc2_params: None,
+            cached_osc2_pre: None,
         }
     }
 }
@@ -172,6 +194,8 @@ impl Plugin for SubtractiveSynth {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
+        self.pi_over_fs = PI / self.sample_rate;
+        self.nyquist = 0.49 * self.sample_rate;
         for voice in &mut self.voices {
             voice.set_sample_rate(self.sample_rate);
             voice.reset();
@@ -181,6 +205,10 @@ impl Plugin for SubtractiveSynth {
         self.shimmer.set_sample_rate(self.sample_rate);
         self.gapper.set_sample_rate(self.sample_rate);
         self.arp.set_sample_rate(self.sample_rate);
+        self.cached_osc1_params = None;
+        self.cached_osc1_pre = None;
+        self.cached_osc2_params = None;
+        self.cached_osc2_pre = None;
         true
     }
 
@@ -323,19 +351,75 @@ impl Plugin for SubtractiveSynth {
             if any_active {
                 let osc1 = Self::osc_voice_params(&self.params.osc1);
                 let osc2 = Self::osc_voice_params(&self.params.osc2);
-                let osc1_pre = OscBankPrecomp::compute(&osc1);
-                let osc2_pre = OscBankPrecomp::compute(&osc2);
+
+                // Reuse previous sample's precomputation if the source
+                // params haven't moved (smoothers idle, no automation).
+                let osc1_pre = match self.cached_osc1_pre {
+                    Some(pre) if self.cached_osc1_params == Some(osc1) => pre,
+                    _ => {
+                        let pre = OscBankPrecomp::compute(&osc1);
+                        self.cached_osc1_params = Some(osc1);
+                        self.cached_osc1_pre = Some(pre);
+                        pre
+                    }
+                };
+                let osc2_pre = match self.cached_osc2_pre {
+                    Some(pre) if self.cached_osc2_params == Some(osc2) => pre,
+                    _ => {
+                        let pre = OscBankPrecomp::compute(&osc2);
+                        self.cached_osc2_params = Some(osc2);
+                        self.cached_osc2_pre = Some(pre);
+                        pre
+                    }
+                };
+
+                let filter1 = Self::filter_voice_params(&self.params.filter1);
+                let filter2 = Self::filter_voice_params(&self.params.filter2);
+
+                // When the filter envelope isn't modulating cutoff, the SVF
+                // coefficients are identical across every voice in the pool,
+                // so the expensive tan() can run once per sample instead of
+                // once per voice per slot.
+                let filter1_coeffs = if filter1.enabled && filter1.env_amount == 0.0 {
+                    Some(SvfCoeffs::compute(
+                        filter1.cutoff,
+                        filter1.resonance,
+                        filter1.drive,
+                        filter1.filter_type,
+                        self.pi_over_fs,
+                        self.nyquist,
+                    ))
+                } else {
+                    None
+                };
+                let filter2_coeffs = if filter2.enabled && filter2.env_amount == 0.0 {
+                    Some(SvfCoeffs::compute(
+                        filter2.cutoff,
+                        filter2.resonance,
+                        filter2.drive,
+                        filter2.filter_type,
+                        self.pi_over_fs,
+                        self.nyquist,
+                    ))
+                } else {
+                    None
+                };
+
                 let voice_params = VoiceParams {
                     osc1,
                     osc2,
                     osc1_pre,
                     osc2_pre,
-                    filter1: Self::filter_voice_params(&self.params.filter1),
-                    filter2: Self::filter_voice_params(&self.params.filter2),
+                    filter1,
+                    filter2,
+                    filter1_coeffs,
+                    filter2_coeffs,
                     amp_env: Self::env_voice_params(&self.params.amp_env),
                     filter1_env: Self::env_voice_params(&self.params.filter1_env),
                     filter2_env: Self::env_voice_params(&self.params.filter2_env),
                     pitch_env: Self::pitch_env_voice_params(&self.params.pitch_env),
+                    pi_over_fs: self.pi_over_fs,
+                    nyquist: self.nyquist,
                 };
 
                 let mut found_active = false;

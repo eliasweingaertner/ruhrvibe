@@ -16,7 +16,7 @@ use crate::params::{FilterType, Waveform};
 pub const MAX_UNISON: usize = 7;
 
 /// Pre-computed per-sample parameter values for a single oscillator.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct OscVoiceParams {
     pub waveform: Waveform,
     pub level: f32,
@@ -120,6 +120,10 @@ impl OscBankPrecomp {
 }
 
 /// Bundled parameters passed to a voice for one sample of processing.
+///
+/// When the filter envelope isn't modulating cutoff (env_amount == 0), the
+/// synth precomputes `filter{1,2}_coeffs` once and shares them across all
+/// voices so `tan()` runs once per sample instead of once per voice per slot.
 #[derive(Clone, Copy)]
 pub struct VoiceParams {
     pub osc1: OscVoiceParams,
@@ -128,15 +132,28 @@ pub struct VoiceParams {
     pub osc2_pre: OscBankPrecomp,
     pub filter1: FilterVoiceParams,
     pub filter2: FilterVoiceParams,
+    /// Shared filter coeffs when `filter1.env_amount == 0`. If `None`, the
+    /// voice must compute its own coefficients from the envelope-modulated
+    /// cutoff.
+    pub filter1_coeffs: Option<SvfCoeffs>,
+    pub filter2_coeffs: Option<SvfCoeffs>,
     pub amp_env: EnvelopeVoiceParams,
     pub filter1_env: EnvelopeVoiceParams,
     pub filter2_env: EnvelopeVoiceParams,
     pub pitch_env: PitchEnvVoiceParams,
+    /// `π / sample_rate`. Precomputed at sample-rate change for SVF coeffs.
+    pub pi_over_fs: f32,
+    /// Hard cap on filter cutoff (≈ Nyquist). Precomputed at sample-rate change.
+    pub nyquist: f32,
 }
 
 pub struct Voice {
     pub note: u8,
     pub velocity: f32,
+    /// Frequency of this voice's note (midi_note_to_freq(note)) cached at
+    /// note_on so the per-sample path skips the exp2 when pitch_env.amount
+    /// is 0 — which is the default for most patches.
+    cached_note_freq: f32,
     osc1: [Oscillator; MAX_UNISON],
     osc2: [Oscillator; MAX_UNISON],
     // Stereo filter pair per slot — each channel has its own state so
@@ -162,12 +179,13 @@ impl Voice {
         Self {
             note: 0,
             velocity: 0.0,
+            cached_note_freq: 0.0,
             osc1,
             osc2,
-            filter1_l: SvfFilter::new(sample_rate),
-            filter1_r: SvfFilter::new(sample_rate),
-            filter2_l: SvfFilter::new(sample_rate),
-            filter2_r: SvfFilter::new(sample_rate),
+            filter1_l: SvfFilter::new(),
+            filter1_r: SvfFilter::new(),
+            filter2_l: SvfFilter::new(),
+            filter2_r: SvfFilter::new(),
             amp_env: Envelope::new(sample_rate),
             filter1_env: Envelope::new(sample_rate),
             filter2_env: Envelope::new(sample_rate),
@@ -178,10 +196,6 @@ impl Voice {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         for o in &mut self.osc1 { o.set_sample_rate(sample_rate); }
         for o in &mut self.osc2 { o.set_sample_rate(sample_rate); }
-        self.filter1_l.set_sample_rate(sample_rate);
-        self.filter1_r.set_sample_rate(sample_rate);
-        self.filter2_l.set_sample_rate(sample_rate);
-        self.filter2_r.set_sample_rate(sample_rate);
         self.amp_env.set_sample_rate(sample_rate);
         self.filter1_env.set_sample_rate(sample_rate);
         self.filter2_env.set_sample_rate(sample_rate);
@@ -191,6 +205,7 @@ impl Voice {
     pub fn note_on(&mut self, note: u8, velocity: f32) {
         self.note = note;
         self.velocity = velocity;
+        self.cached_note_freq = midi_note_to_freq(note as f32);
         for o in &mut self.osc1 { o.reset(); }
         for o in &mut self.osc2 { o.reset(); }
         self.filter1_l.reset();
@@ -240,35 +255,54 @@ impl Voice {
             return (0.0, 0.0);
         }
 
-        // Advance envelopes.
+        // Amp envelope always advances — it gates the voice.
         let amp = self.amp_env.next_sample(
             params.amp_env.attack,
             params.amp_env.decay,
             params.amp_env.sustain,
             params.amp_env.release,
         );
-        let f1_env = self.filter1_env.next_sample(
-            params.filter1_env.attack,
-            params.filter1_env.decay,
-            params.filter1_env.sustain,
-            params.filter1_env.release,
-        );
-        let f2_env = self.filter2_env.next_sample(
-            params.filter2_env.attack,
-            params.filter2_env.decay,
-            params.filter2_env.sustain,
-            params.filter2_env.release,
-        );
-        let pitch_env_val = self.pitch_env.next_sample(
-            params.pitch_env.attack,
-            params.pitch_env.decay,
-            params.pitch_env.sustain,
-            params.pitch_env.release,
-        );
 
-        // Pitch envelope modulates base note in semitones.
-        let pitch_offset_semitones = pitch_env_val * params.pitch_env.amount;
-        let base_freq = midi_note_to_freq(self.note as f32 + pitch_offset_semitones);
+        // Filter envelopes only advance when they matter. When env_amount is
+        // 0, the envelope output isn't multiplied into anything, so skip the
+        // state update entirely. If env_amount later becomes non-zero the
+        // envelope starts from wherever it was — acceptable for a DSP state
+        // that isn't contributing to the output.
+        let f1_env = if params.filter1.env_amount != 0.0 && params.filter1.enabled {
+            self.filter1_env.next_sample(
+                params.filter1_env.attack,
+                params.filter1_env.decay,
+                params.filter1_env.sustain,
+                params.filter1_env.release,
+            )
+        } else {
+            0.0
+        };
+        let f2_env = if params.filter2.env_amount != 0.0 && params.filter2.enabled {
+            self.filter2_env.next_sample(
+                params.filter2_env.attack,
+                params.filter2_env.decay,
+                params.filter2_env.sustain,
+                params.filter2_env.release,
+            )
+        } else {
+            0.0
+        };
+
+        // Pitch envelope: same treatment. Skip the exp2 call entirely when
+        // amount is 0 (the default on most patches).
+        let base_freq = if params.pitch_env.amount != 0.0 {
+            let pitch_env_val = self.pitch_env.next_sample(
+                params.pitch_env.attack,
+                params.pitch_env.decay,
+                params.pitch_env.sustain,
+                params.pitch_env.release,
+            );
+            let semitones = pitch_env_val * params.pitch_env.amount;
+            self.cached_note_freq * exp2_fast(semitones * (1.0 / 12.0))
+        } else {
+            self.cached_note_freq
+        };
 
         // Oscillator 1 + 2, each produces (L, R).
         let (mut mix_l, mut mix_r) = (0.0f32, 0.0f32);
@@ -294,37 +328,47 @@ impl Voice {
         }
 
         // Filter 1 (per-channel). SVF is linear, but we keep separate state
-        // so stereo content survives the filter (phase/resonance behavior).
-        // Coefficients are computed once and shared across L/R to avoid
-        // redundant tan() calls.
+        // so stereo content survives the filter. Coeffs are either shared
+        // across voices (env_amount == 0, computed once at synth level) or
+        // computed here from the envelope-modulated cutoff.
         let (mut sig_l, mut sig_r) = (mix_l, mix_r);
         if params.filter1.enabled {
-            let modulated_cutoff = params.filter1.cutoff
-                * exp2_fast(f1_env * params.filter1.env_amount * 4.0);
-            let coeffs = SvfCoeffs::compute(
-                modulated_cutoff,
-                params.filter1.resonance,
-                params.filter1.drive,
-                params.filter1.filter_type,
-                self.filter1_l.inv_sample_rate(),
-                self.filter1_l.half_sample_rate(),
-            );
+            let coeffs = match params.filter1_coeffs {
+                Some(c) => c,
+                None => {
+                    let modulated_cutoff = params.filter1.cutoff
+                        * exp2_fast(f1_env * params.filter1.env_amount * 4.0);
+                    SvfCoeffs::compute(
+                        modulated_cutoff,
+                        params.filter1.resonance,
+                        params.filter1.drive,
+                        params.filter1.filter_type,
+                        params.pi_over_fs,
+                        params.nyquist,
+                    )
+                }
+            };
             sig_l = self.filter1_l.process_coeffs(sig_l, &coeffs);
             sig_r = self.filter1_r.process_coeffs(sig_r, &coeffs);
         }
 
         // Filter 2 (per-channel).
         if params.filter2.enabled {
-            let modulated_cutoff = params.filter2.cutoff
-                * exp2_fast(f2_env * params.filter2.env_amount * 4.0);
-            let coeffs = SvfCoeffs::compute(
-                modulated_cutoff,
-                params.filter2.resonance,
-                params.filter2.drive,
-                params.filter2.filter_type,
-                self.filter2_l.inv_sample_rate(),
-                self.filter2_l.half_sample_rate(),
-            );
+            let coeffs = match params.filter2_coeffs {
+                Some(c) => c,
+                None => {
+                    let modulated_cutoff = params.filter2.cutoff
+                        * exp2_fast(f2_env * params.filter2.env_amount * 4.0);
+                    SvfCoeffs::compute(
+                        modulated_cutoff,
+                        params.filter2.resonance,
+                        params.filter2.drive,
+                        params.filter2.filter_type,
+                        params.pi_over_fs,
+                        params.nyquist,
+                    )
+                }
+            };
             sig_l = self.filter2_l.process_coeffs(sig_l, &coeffs);
             sig_r = self.filter2_r.process_coeffs(sig_r, &coeffs);
         }

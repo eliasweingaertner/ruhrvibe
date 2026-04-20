@@ -5,12 +5,13 @@
 //! owns its own filter instance with independent state.
 
 use crate::params::FilterType;
-use std::f32::consts::PI;
 
 /// Pre-computed filter coefficients, shared across both L/R channels of a
 /// single filter slot for one sample. Holding the expensive tan() and
 /// 1/(1+g*(g+k)) outside the filter struct means they're computed once per
-/// voice-per-slot instead of once per voice-per-slot-per-channel.
+/// voice-per-slot instead of once per voice-per-slot-per-channel — and the
+/// same instance can be shared across every voice in the pool when the
+/// filter envelope isn't modulating cutoff.
 #[derive(Clone, Copy)]
 pub struct SvfCoeffs {
     pub k: f32,
@@ -29,11 +30,11 @@ impl SvfCoeffs {
         resonance: f32,
         drive: f32,
         filter_type: FilterType,
-        inv_sample_rate: f32,
-        half_sample_rate: f32,
+        pi_over_fs: f32,
+        nyquist: f32,
     ) -> Self {
-        let cutoff = cutoff_hz.clamp(20.0, half_sample_rate);
-        let g = (PI * cutoff * inv_sample_rate).tan();
+        let cutoff = cutoff_hz.clamp(20.0, nyquist);
+        let g = (pi_over_fs * cutoff).tan();
         let k = (2.0 - 2.0 * resonance.min(0.995)).max(0.01);
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
@@ -46,29 +47,12 @@ impl SvfCoeffs {
 pub struct SvfFilter {
     ic1eq: f32,
     ic2eq: f32,
-    inv_sample_rate: f32,
-    half_sample_rate: f32,
 }
 
 impl SvfFilter {
-    pub fn new(sample_rate: f32) -> Self {
-        Self {
-            ic1eq: 0.0,
-            ic2eq: 0.0,
-            inv_sample_rate: 1.0 / sample_rate,
-            half_sample_rate: sample_rate * 0.49,
-        }
+    pub fn new() -> Self {
+        Self { ic1eq: 0.0, ic2eq: 0.0 }
     }
-
-    pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.inv_sample_rate = 1.0 / sample_rate;
-        self.half_sample_rate = sample_rate * 0.49;
-    }
-
-    #[inline]
-    pub fn inv_sample_rate(&self) -> f32 { self.inv_sample_rate }
-    #[inline]
-    pub fn half_sample_rate(&self) -> f32 { self.half_sample_rate }
 
     pub fn reset(&mut self) {
         self.ic1eq = 0.0;
