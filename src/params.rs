@@ -73,6 +73,9 @@ pub struct OscParams {
 
     #[id = "stspr"]
     pub stereo_spread: FloatParam,
+
+    #[id = "fm"]
+    pub fm_amount: FloatParam,
 }
 
 impl OscParams {
@@ -129,6 +132,13 @@ impl OscParams {
             .with_smoother(SmoothingStyle::Linear(20.0))
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
+            fm_amount: FloatParam::new(
+                "FM",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 5.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_step_size(0.01),
         }
     }
 }

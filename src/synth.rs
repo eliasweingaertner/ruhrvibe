@@ -420,6 +420,7 @@ impl Plugin for SubtractiveSynth {
                     pitch_env: Self::pitch_env_voice_params(&self.params.pitch_env),
                     pi_over_fs: self.pi_over_fs,
                     nyquist: self.nyquist,
+                    osc1_fm_amount: self.params.osc1.fm_amount.smoothed.next(),
                 };
 
                 let mut found_active = false;

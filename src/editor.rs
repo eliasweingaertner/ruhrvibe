@@ -632,6 +632,11 @@ fn osc_section(cx: &mut Context, title: &str, accent: &'static str, sel: OscSel)
                 OscSel::Osc2 => { ParamSlider::new(cx, AppData::params, |p| &p.osc2.stereo_spread); }
             }
         });
+        if matches!(sel, OscSel::Osc1) {
+            labeled_row(cx, "FM<Osc2", |cx| {
+                ParamSlider::new(cx, AppData::params, |p| &p.osc1.fm_amount);
+            });
+        }
     });
 }
 

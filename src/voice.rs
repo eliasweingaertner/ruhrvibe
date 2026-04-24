@@ -145,6 +145,9 @@ pub struct VoiceParams {
     pub pi_over_fs: f32,
     /// Hard cap on filter cutoff (≈ Nyquist). Precomputed at sample-rate change.
     pub nyquist: f32,
+    /// Phase modulation depth: osc2 output * this value is added to osc1's
+    /// instantaneous phase (in cycles) before each sample. 0.0 = no FM.
+    pub osc1_fm_amount: f32,
 }
 
 pub struct Voice {
@@ -304,24 +307,35 @@ impl Voice {
             self.cached_note_freq
         };
 
-        // Oscillator 1 + 2, each produces (L, R).
+        // Osc2 runs first: it is both an audio source and the FM modulator for
+        // osc1. We always run it when FM is active so the modulator phase stays
+        // continuous even when osc2 is muted in the mix.
         let (mut mix_l, mut mix_r) = (0.0f32, 0.0f32);
-        if params.osc1.enabled {
-            let (l, r) = Self::process_osc_bank(
-                &mut self.osc1,
-                base_freq,
-                params.osc1.waveform,
-                &params.osc1_pre,
-            );
-            mix_l += l;
-            mix_r += r;
-        }
-        if params.osc2.enabled {
-            let (l, r) = Self::process_osc_bank(
+        let mono2 = if params.osc2.enabled || params.osc1_fm_amount != 0.0 {
+            let (l, r, mono) = Self::process_osc_bank(
                 &mut self.osc2,
                 base_freq,
                 params.osc2.waveform,
                 &params.osc2_pre,
+                0.0,
+            );
+            if params.osc2.enabled {
+                mix_l += l;
+                mix_r += r;
+            }
+            mono
+        } else {
+            0.0
+        };
+
+        if params.osc1.enabled {
+            let fm_offset = mono2 * params.osc1_fm_amount;
+            let (l, r, _) = Self::process_osc_bank(
+                &mut self.osc1,
+                base_freq,
+                params.osc1.waveform,
+                &params.osc1_pre,
+                fm_offset,
             );
             mix_l += l;
             mix_r += r;
@@ -377,35 +391,46 @@ impl Voice {
         (sig_l * gain, sig_r * gain)
     }
 
-    /// Process an oscillator bank with unison detuning. Returns (L, R) with
-    /// unison voices spread across the stereo field and the bank's pan applied.
-    /// All frequency ratios and pan gains come from the precomputed bank state
-    /// so this path avoids per-voice `exp2_fast` and trig calls.
+    /// Process an oscillator bank with unison detuning. Returns `(L, R, mono)`
+    /// where mono is the pre-pan sum, used as the FM modulator signal for the
+    /// other oscillator. `fm_offset` (in cycles) is added to each unison
+    /// voice's phase via phase modulation; pass 0.0 for no FM.
     #[inline]
     fn process_osc_bank(
         oscs: &mut [Oscillator; MAX_UNISON],
         base_freq: f32,
         waveform: Waveform,
         pre: &OscBankPrecomp,
-    ) -> (f32, f32) {
+        fm_offset: f32,
+    ) -> (f32, f32, f32) {
         let center_freq = base_freq * pre.octave_detune_ratio;
 
         if pre.n == 1 {
             oscs[0].set_frequency(center_freq);
-            let s = oscs[0].next_sample(waveform) * pre.norm;
-            return (s * pre.bank_pan_l, s * pre.bank_pan_r);
+            let s = if fm_offset != 0.0 {
+                oscs[0].next_sample_pm(waveform, fm_offset)
+            } else {
+                oscs[0].next_sample(waveform)
+            } * pre.norm;
+            return (s * pre.bank_pan_l, s * pre.bank_pan_r, s);
         }
 
         let mut sum_l = 0.0f32;
         let mut sum_r = 0.0f32;
+        let mut mono = 0.0f32;
         for i in 0..pre.n {
             let freq = center_freq * pre.spread_ratios[i];
             oscs[i].set_frequency(freq);
-            let s = oscs[i].next_sample(waveform) * pre.norm;
+            let s = if fm_offset != 0.0 {
+                oscs[i].next_sample_pm(waveform, fm_offset)
+            } else {
+                oscs[i].next_sample(waveform)
+            } * pre.norm;
+            mono += s;
             sum_l += s * pre.voice_pans_l[i];
             sum_r += s * pre.voice_pans_r[i];
         }
-        (sum_l * pre.bank_pan_l, sum_r * pre.bank_pan_r)
+        (sum_l * pre.bank_pan_l, sum_r * pre.bank_pan_r, mono)
     }
 }
 

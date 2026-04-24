@@ -72,6 +72,27 @@ impl Oscillator {
         sample
     }
 
+    /// Phase-modulated variant: adds `pm_offset` (in cycles) to the effective
+    /// phase used for sample generation while advancing the stored phase normally.
+    /// PolyBLEP correction is applied at the modulated discontinuity positions.
+    #[inline]
+    pub fn next_sample_pm(&mut self, waveform: Waveform, pm_offset: f32) -> f32 {
+        let real_phase = self.phase;
+        self.phase = (self.phase + pm_offset).rem_euclid(1.0);
+
+        let sample = match waveform {
+            Waveform::Sine => self.generate_sine(),
+            Waveform::Saw => self.generate_saw(),
+            Waveform::Square => self.generate_square(),
+            Waveform::Triangle => self.generate_triangle(),
+            Waveform::Noise => self.step_noise(),
+        };
+
+        self.phase = real_phase + self.phase_increment;
+        if self.phase >= 1.0 { self.phase -= 1.0; }
+        sample
+    }
+
     #[inline]
     fn generate_sine(&self) -> f32 {
         (self.phase * TAU).sin()
