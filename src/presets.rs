@@ -24,6 +24,7 @@ pub struct OscPreset {
     pub unison_spread: f32,
     pub pan: f32,
     pub stereo_spread: f32,
+    pub fm_amount: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -132,14 +133,20 @@ pub struct Preset {
 const fn o(w: Waveform, lv: f32, det: f32, oct: i32, en: bool, uni: i32, sp: f32) -> OscPreset {
     // Default stereo: center, 50% unison spread (only audible when unison > 1).
     OscPreset { waveform: w, level: lv, detune: det, octave: oct, enabled: en,
-                unison_voices: uni, unison_spread: sp, pan: 0.0, stereo_spread: 0.5 }
+                unison_voices: uni, unison_spread: sp, pan: 0.0, stereo_spread: 0.5, fm_amount: 0.0 }
+}
+/// Oscillator preset with FM amount (Osc2 phase-modulates Osc1).
+#[allow(dead_code)]
+const fn of(w: Waveform, lv: f32, det: f32, oct: i32, en: bool, uni: i32, sp: f32, fm: f32) -> OscPreset {
+    OscPreset { waveform: w, level: lv, detune: det, octave: oct, enabled: en,
+                unison_voices: uni, unison_spread: sp, pan: 0.0, stereo_spread: 0.5, fm_amount: fm }
 }
 /// Oscillator preset with explicit pan and stereo spread.
 #[allow(dead_code)]
 const fn op(w: Waveform, lv: f32, det: f32, oct: i32, en: bool, uni: i32, sp: f32,
             pan: f32, st: f32) -> OscPreset {
     OscPreset { waveform: w, level: lv, detune: det, octave: oct, enabled: en,
-                unison_voices: uni, unison_spread: sp, pan, stereo_spread: st }
+                unison_voices: uni, unison_spread: sp, pan, stereo_spread: st, fm_amount: 0.0 }
 }
 const fn f(ft: FilterType, cut: f32, res: f32, drv: f32, ea: f32, en: bool) -> FilterPreset {
     FilterPreset { filter_type: ft, cutoff: cut, resonance: res, drive: drv, env_amount: ea, enabled: en }
@@ -253,8 +260,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Common", name: "Pluck",
-        osc1: o(SQR, 0.75, 0.0, 0, true, 1, 20.0),
-        osc2: OOFF,
+        // Light FM adds attack transient complexity to the pluck
+        osc1: of(SQR, 0.75, 0.0, 0, true, 1, 20.0, 0.5),
+        osc2: o(SIN, 0.3, 0.0, 1, true, 1, 0.0),
         filter1: f(LP, 3000.0, 0.4, 1.2, 0.8, true),
         filter2: FOFF,
         amp_env: e(0.003, 0.25, 0.0, 0.25),
@@ -370,8 +378,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Common", name: "Hi-Hat",
-        osc1: o(NOI, 0.9, 0.0, 0, true, 1, 0.0),
-        osc2: o(SQR, 0.15, 0.0, 2, true, 1, 0.0),
+        osc1: of(SQR, 0.65, 0.0, 2, true, 1, 0.0, 3.0),
+        osc2: o(SQR, 0.35, 10.0, 3, true, 1, 0.0),
         filter1: f(HP, 7000.0, 0.3, 1.0, 0.0, true),
         filter2: f(BP, 10000.0, 0.5, 1.0, 0.0, true),
         amp_env: e(0.001, 0.06, 0.0, 0.04),
@@ -380,8 +388,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Common", name: "Tom",
-        osc1: o(SIN, 0.9, 0.0, 0, true, 1, 0.0),
-        osc2: o(NOI, 0.2, 0.0, 0, true, 1, 0.0),
+        osc1: of(SIN, 0.9, 0.0, 0, true, 1, 0.0, 0.4),
+        osc2: o(SIN, 0.3, 5.0, 1, true, 1, 0.0),
         filter1: f(LP, 1500.0, 0.2, 1.0, 0.0, true),
         filter2: FOFF,
         amp_env: e(0.001, 0.35, 0.0, 0.2),
@@ -485,8 +493,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
     // CRAZY PRESETS
     // ===================================================================
     Preset { category: "Fun", name: "Alf",
-        // Alien sitcom creature: wobbly, nasal, slightly unhinged.
-        osc1: o(SQR, 0.6, -15.0, 0, true, 5, 50.0),
+        // Alien sitcom creature: wobbly, nasal, slightly unhinged. FM adds the alien overtones.
+        osc1: of(SQR, 0.6, -15.0, 0, true, 5, 50.0, 0.5),
         osc2: o(SAW, 0.5, 20.0, 1, true, 3, 35.0),
         filter1: f(BP, 1200.0, 0.60, 1.5, 0.70, true),
         filter2: f(NT, 2500.0, 0.50, 1.0, 0.30, true),
@@ -595,9 +603,11 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Bass", name: "FM Slap",
-        osc1: o(SIN, 0.85, 0.0, -1, true, 1, 0.0),
-        osc2: o(SQR, 0.25, 0.0, 1, true, 1, 0.0),
-        filter1: f(LP, 1600.0, 0.25, 1.0, 0.5, true),
+        // Actual FM now: SIN carrier modulated by SIN one octave up, high FM depth
+        // for that clicky, harmonics-rich slap bass attack
+        osc1: of(SIN, 0.85, 0.0, -1, true, 1, 0.0, 1.8),
+        osc2: o(SIN, 0.5, 0.0, 1, true, 1, 0.0),
+        filter1: f(LP, 1800.0, 0.2, 1.0, 0.6, true),
         filter2: FOFF,
         amp_env: e(0.001, 0.12, 0.0, 0.08),
         filter1_env: e(0.001, 0.08, 0.0, 0.05),
@@ -617,8 +627,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Bass", name: "Growl",
-        osc1: o(SAW, 0.8, -3.0, -1, true, 3, 10.0),
-        osc2: o(NOI, 0.1, 0.0, 0, true, 1, 0.0),
+        // Light FM from SAW modulator adds extra grit to the growl texture
+        osc1: of(SAW, 0.8, -3.0, -1, true, 3, 10.0, 0.4),
+        osc2: o(SAW, 0.3, 5.0, 0, true, 1, 0.0),
         filter1: f(BP, 400.0, 0.8, 1.4, 0.4, true),
         filter2: f(LP, 1200.0, 0.4, 1.2, 0.2, true),
         amp_env: e(0.003, 0.3, 0.75, 0.2),
@@ -665,8 +676,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
     // KEYS
     // ===================================================================
     Preset { category: "Keys", name: "EP Rhodes",
-        osc1: o(SIN, 0.8, 0.0, 0, true, 1, 0.0),
-        osc2: o(TRI, 0.3, 0.0, 1, true, 1, 0.0),
+        // FM from a SIN modulator one octave up gives the classic DX7 tine shimmer
+        osc1: of(SIN, 0.8, 0.0, 0, true, 1, 0.0, 0.85),
+        osc2: o(SIN, 0.3, 0.0, 1, true, 1, 0.0),
         filter1: f(LP, 3500.0, 0.15, 1.0, 0.3, true),
         filter2: FOFF,
         amp_env: e(0.003, 1.2, 0.15, 0.5),
@@ -676,7 +688,7 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: fx(ch(0.4, 0.5, 0.3, true), DLY_OFF, SHM_OFF, GAP_OFF), arp: ARP_OFF,
     },
     Preset { category: "Keys", name: "Clav",
-        osc1: o(SQR, 0.8, -3.0, 0, true, 1, 0.0),
+        osc1: of(SQR, 0.8, -3.0, 0, true, 1, 0.0, 0.6),
         osc2: o(SAW, 0.5, 3.0, 0, true, 1, 0.0),
         filter1: f(HP, 300.0, 0.2, 1.0, 0.0, true),
         filter2: f(LP, 4000.0, 0.25, 1.1, 0.6, true),
@@ -688,7 +700,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Keys", name: "Wurli",
-        osc1: o(TRI, 0.75, -4.0, 0, true, 1, 0.0),
+        // Light FM adds the buzzy reed-like partials of a Wurlitzer
+        osc1: of(TRI, 0.75, -4.0, 0, true, 1, 0.0, 0.45),
         osc2: o(SIN, 0.5, 4.0, 0, true, 1, 0.0),
         filter1: f(LP, 3000.0, 0.2, 1.1, 0.3, true),
         filter2: FOFF,
@@ -743,7 +756,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: fx(CHR_OFF, dl(300.0, 0.3, 0.6, 0.18, true), SHM_OFF, GAP_OFF), arp: ARP_OFF,
     },
     Preset { category: "Keys", name: "Glass Piano",
-        osc1: o(SIN, 0.8, 0.0, 0, true, 1, 0.0),
+        // FM adds the inharmonic partial shimmer that makes glass resonate
+        osc1: of(SIN, 0.8, 0.0, 0, true, 1, 0.0, 1.2),
         osc2: o(TRI, 0.3, 0.0, 2, true, 1, 0.0),
         filter1: f(HP, 200.0, 0.1, 1.0, 0.0, true),
         filter2: FOFF,
@@ -765,8 +779,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: fx(ch(0.4, 0.5, 0.3, true), dl(350.0, 0.3, 0.7, 0.2, true), SHM_OFF, GAP_OFF), arp: ARP_OFF,
     },
     Preset { category: "Keys", name: "Music Box",
-        osc1: o(SIN, 0.8, 0.0, 2, true, 1, 0.0),
-        osc2: o(TRI, 0.3, 0.0, 3, true, 1, 0.0),
+        // FM at a non-integer ratio gives the characteristic inharmonic tine of a music box
+        osc1: of(SIN, 0.8, 0.0, 2, true, 1, 0.0, 1.5),
+        osc2: o(SIN, 0.3, 0.0, 3, true, 1, 0.0),
         filter1: f(HP, 400.0, 0.15, 1.0, 0.0, true),
         filter2: f(LP, 6000.0, 0.2, 1.0, 0.3, true),
         amp_env: e(0.001, 0.8, 0.0, 0.5),
@@ -929,8 +944,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: fx(CHR_OFF, dl(60.0, 0.15, 0.5, 0.3, true), SHM_OFF, GAP_OFF), arp: ARP_OFF,
     },
     Preset { category: "Drums", name: "Closed HH",
-        osc1: o(NOI, 0.85, 0.0, 0, true, 1, 0.0),
-        osc2: OOFF,
+        // FM between two SQRs with slight detune produces dense inharmonic partials
+        osc1: of(SQR, 0.65, 0.0, 2, true, 1, 0.0, 3.5),
+        osc2: o(SQR, 0.3, 10.0, 3, true, 1, 0.0),
         filter1: f(HP, 9000.0, 0.4, 1.0, 0.0, true),
         filter2: FOFF,
         amp_env: e(0.001, 0.05, 0.0, 0.03),
@@ -940,8 +956,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Drums", name: "Open HH",
-        osc1: o(NOI, 0.85, 0.0, 0, true, 1, 0.0),
-        osc2: o(SQR, 0.1, 0.0, 3, true, 1, 0.0),
+        osc1: of(SQR, 0.65, 0.0, 2, true, 1, 0.0, 2.5),
+        osc2: o(SQR, 0.3, 7.0, 3, true, 1, 0.0),
         filter1: f(HP, 7000.0, 0.35, 1.0, 0.0, true),
         filter2: FOFF,
         amp_env: e(0.001, 0.35, 0.0, 0.15),
@@ -951,8 +967,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Drums", name: "Crash",
-        osc1: o(NOI, 0.85, 0.0, 0, true, 1, 0.0),
-        osc2: o(SQR, 0.2, 0.0, 3, true, 1, 0.0),
+        // High FM index + long decay + HP/BP shaping = crash cymbal spread
+        osc1: of(SQR, 0.6, 0.0, 2, true, 1, 0.0, 4.0),
+        osc2: o(SQR, 0.4, 15.0, 3, true, 1, 0.0),
         filter1: f(HP, 5000.0, 0.3, 1.0, 0.0, true),
         filter2: f(BP, 8000.0, 0.4, 1.0, 0.0, true),
         amp_env: e(0.001, 1.5, 0.0, 0.8),
@@ -962,8 +979,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Drums", name: "Rimshot",
-        osc1: o(SQR, 0.7, 0.0, 1, true, 1, 0.0),
-        osc2: o(TRI, 0.3, 3.0, 1, true, 1, 0.0),
+        osc1: of(SQR, 0.7, 0.0, 1, true, 1, 0.0, 1.5),
+        osc2: o(SIN, 0.3, 3.0, 1, true, 1, 0.0),
         filter1: f(BP, 1800.0, 0.5, 1.1, 0.0, true),
         filter2: FOFF,
         amp_env: e(0.001, 0.05, 0.0, 0.03),
@@ -973,8 +990,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Drums", name: "Wood Block",
-        osc1: o(TRI, 0.8, 0.0, 1, true, 1, 0.0),
-        osc2: OOFF,
+        osc1: of(TRI, 0.8, 0.0, 1, true, 1, 0.0, 1.2),
+        osc2: o(SIN, 0.4, 0.0, 2, true, 1, 0.0),
         filter1: f(HP, 1500.0, 0.3, 1.0, 0.0, true),
         filter2: FOFF,
         amp_env: e(0.001, 0.08, 0.0, 0.05),
@@ -984,7 +1001,8 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Drums", name: "Cowbell",
-        osc1: o(SQR, 0.7, -6.0, 1, true, 1, 0.0),
+        // Two detuned SQRs + FM gives the classic inharmonic clanging metallic tone
+        osc1: of(SQR, 0.7, -6.0, 1, true, 1, 0.0, 2.0),
         osc2: o(SQR, 0.6, 6.0, 1, true, 1, 0.0),
         filter1: f(BP, 2500.0, 0.3, 1.1, 0.0, true),
         filter2: FOFF,
@@ -995,8 +1013,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Drums", name: "Tambourine",
-        osc1: o(NOI, 0.8, 0.0, 0, true, 1, 0.0),
-        osc2: OOFF,
+        // High FM index + detuned modulator creates jingly metallic shimmer
+        osc1: of(SQR, 0.65, 0.0, 3, true, 1, 0.0, 4.0),
+        osc2: o(SQR, 0.35, 19.0, 3, true, 1, 0.0),
         filter1: f(HP, 6000.0, 0.25, 1.0, 0.0, true),
         filter2: f(BP, 9000.0, 0.4, 1.0, 0.0, true),
         amp_env: e(0.001, 0.15, 0.0, 0.08),
@@ -1010,7 +1029,7 @@ pub const FACTORY_PRESETS: &[Preset] = &[
     // ONESHOTS
     // ===================================================================
     Preset { category: "Oneshots", name: "Stab",
-        osc1: o(SAW, 0.8, -4.0, 0, true, 3, 10.0),
+        osc1: of(SAW, 0.8, -4.0, 0, true, 3, 10.0, 0.5),
         osc2: o(SAW, 0.7, 4.0, 0, true, 3, 10.0),
         filter1: f(LP, 2500.0, 0.3, 1.2, 0.5, true),
         filter2: FOFF,
@@ -1032,8 +1051,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Oneshots", name: "Laser Zap",
-        osc1: o(SQR, 0.8, 0.0, 2, true, 1, 0.0),
-        osc2: OOFF,
+        // FM adds the metallic harmonic splash on the attack
+        osc1: of(SQR, 0.8, 0.0, 2, true, 1, 0.0, 2.5),
+        osc2: o(SQR, 0.3, 0.0, 3, true, 1, 0.0),
         filter1: f(LP, 3000.0, 0.5, 1.0, 0.4, true),
         filter2: FOFF,
         amp_env: e(0.001, 0.3, 0.0, 0.1),
@@ -1098,8 +1118,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: FX_OFF, arp: ARP_OFF,
     },
     Preset { category: "Oneshots", name: "Click",
-        osc1: o(SQR, 0.8, 0.0, 3, true, 1, 0.0),
-        osc2: OOFF,
+        // High FM index on a very short transient = sharp metallic click transient
+        osc1: of(SQR, 0.8, 0.0, 3, true, 1, 0.0, 3.0),
+        osc2: o(SQR, 0.3, 0.0, 3, true, 1, 0.0),
         filter1: f(HP, 2000.0, 0.2, 1.0, 0.0, true),
         filter2: FOFF,
         amp_env: e(0.0005, 0.02, 0.0, 0.01),
@@ -1587,8 +1608,9 @@ pub const FACTORY_PRESETS: &[Preset] = &[
         fx: fx(CHR_OFF, dl(600.0, 0.5, 0.4, 0.3, true), sh(800.0, 0.6, 0.4, true), GAP_OFF), arp: ARP_OFF,
     },
     Preset { category: "Atmospheres", name: "Mystical Bells",
-        osc1: o(SIN, 0.8, 0.0, 1, true, 1, 0.0),
-        osc2: o(TRI, 0.5, 0.0, 2, true, 1, 0.0),
+        // FM synthesis produces the inharmonic partials that define real bell tones
+        osc1: of(SIN, 0.8, 0.0, 1, true, 1, 0.0, 2.2),
+        osc2: o(SIN, 0.5, 0.0, 2, true, 1, 0.0),
         filter1: f(HP, 400.0, 0.1, 1.0, 0.0, true),
         filter2: FOFF,
         amp_env: e(0.005, 1.5, 0.15, 1.5),
@@ -1686,6 +1708,7 @@ fn apply_osc(src: &OscPreset, dst: &crate::params::OscParams, ctx: &dyn GuiConte
     set_float(ctx, &dst.unison_spread, src.unison_spread);
     set_float(ctx, &dst.pan, src.pan);
     set_float(ctx, &dst.stereo_spread, src.stereo_spread);
+    set_float(ctx, &dst.fm_amount, src.fm_amount);
 }
 
 fn apply_filter(src: &FilterPreset, dst: &crate::params::FilterParams, ctx: &dyn GuiContext) {
