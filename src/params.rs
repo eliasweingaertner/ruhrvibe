@@ -27,6 +27,15 @@ pub enum Waveform {
     Noise,
 }
 
+/// Distortion waveshaper character.
+#[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum DistType {
+    #[id = "soft"] #[name = "Soft"] Soft,
+    #[id = "hard"] #[name = "Hard"] Hard,
+    #[id = "fuzz"] #[name = "Fuzz"] Fuzz,
+    #[id = "warm"] #[name = "Warm"] Warm,
+}
+
 /// Filter type selection.
 #[derive(Enum, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum FilterType {
@@ -764,6 +773,97 @@ impl ShimmerFxParams {
     }
 }
 
+/// Parameters for the plate reverb.
+#[derive(Params)]
+pub struct ReverbFxParams {
+    #[id = "on"]   pub enabled:   BoolParam,
+    #[id = "size"] pub room_size: FloatParam,
+    #[id = "damp"] pub damping:   FloatParam,
+    #[id = "wid"]  pub width:     FloatParam,
+    #[id = "mix"]  pub mix:       FloatParam,
+}
+
+impl ReverbFxParams {
+    fn new() -> Self {
+        Self {
+            enabled:   BoolParam::new("Enabled", false),
+            room_size: FloatParam::new("Size", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            damping:   FloatParam::new("Damping", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            width:     FloatParam::new("Width", 1.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            mix:       FloatParam::new("Mix", 0.25, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+        }
+    }
+}
+
+/// Parameters for the waveshaping distortion.
+#[derive(Params)]
+pub struct DistortionFxParams {
+    #[id = "on"]   pub enabled:   BoolParam,
+    #[id = "drv"]  pub drive:     FloatParam,
+    #[id = "type"] pub dist_type: EnumParam<DistType>,
+    #[id = "tone"] pub tone:      FloatParam,
+    #[id = "mix"]  pub mix:       FloatParam,
+}
+
+impl DistortionFxParams {
+    fn new() -> Self {
+        Self {
+            enabled:   BoolParam::new("Enabled", false),
+            drive:     FloatParam::new("Drive", 2.0,
+                FloatRange::Skewed { min: 1.0, max: 20.0, factor: FloatRange::skew_factor(-1.5) })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(Arc::new(|v| format!("{:.1}x", v))),
+            dist_type: EnumParam::new("Type", DistType::Soft),
+            tone:      FloatParam::new("Tone", 0.8, FloatRange::Linear { min: 0.05, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+            mix:       FloatParam::new("Mix", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+        }
+    }
+}
+
+/// Per-effect position in the FX chain (1 = first, 6 = last).
+/// The synth sorts effects by this value before processing each block.
+#[derive(Params)]
+pub struct FxOrderParams {
+    #[id = "chr"] pub chorus:      IntParam,
+    #[id = "dly"] pub delay:       IntParam,
+    #[id = "shm"] pub shimmer:     IntParam,
+    #[id = "gap"] pub gapper:      IntParam,
+    #[id = "rev"] pub reverb:      IntParam,
+    #[id = "dst"] pub distortion:  IntParam,
+}
+
+impl FxOrderParams {
+    fn new() -> Self {
+        let pos = |name, default| IntParam::new(name, default, IntRange::Linear { min: 1, max: 6 });
+        Self {
+            chorus:     pos("Chorus pos",     1),
+            delay:      pos("Delay pos",      2),
+            shimmer:    pos("Shimmer pos",    3),
+            gapper:     pos("Gapper pos",     4),
+            reverb:     pos("Reverb pos",     5),
+            distortion: pos("Distortion pos", 6),
+        }
+    }
+}
+
 /// Top-level plugin parameters.
 #[derive(Params)]
 pub struct SynthParams {
@@ -810,6 +910,15 @@ pub struct SynthParams {
     #[nested(id_prefix = "arp", group = "Arpeggiator")]
     pub arp: Arc<ArpParams>,
 
+    #[nested(id_prefix = "rev", group = "Reverb")]
+    pub reverb: Arc<ReverbFxParams>,
+
+    #[nested(id_prefix = "dist", group = "Distortion")]
+    pub distortion: Arc<DistortionFxParams>,
+
+    #[nested(id_prefix = "fxord", group = "FX Order")]
+    pub fx_order: Arc<FxOrderParams>,
+
     #[id = "master_gain"]
     pub master_gain: FloatParam,
 
@@ -834,6 +943,9 @@ impl Default for SynthParams {
             shimmer: Arc::new(ShimmerFxParams::new()),
             gapper: Arc::new(GapperFxParams::new()),
             arp: Arc::new(ArpParams::new()),
+            reverb: Arc::new(ReverbFxParams::new()),
+            distortion: Arc::new(DistortionFxParams::new()),
+            fx_order: Arc::new(FxOrderParams::new()),
             master_gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(-6.0),

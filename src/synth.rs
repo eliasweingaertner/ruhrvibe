@@ -13,7 +13,9 @@ use crate::arp::Arpeggiator;
 use crate::filter::SvfCoeffs;
 use crate::fx::chorus::Chorus;
 use crate::fx::delay::Delay;
+use crate::fx::distortion::Distortion;
 use crate::fx::gapper::Gapper;
+use crate::fx::reverb::Reverb;
 use crate::fx::shimmer::Shimmer;
 use crate::params::SynthParams;
 use crate::voice::{
@@ -37,6 +39,8 @@ pub struct SubtractiveSynth {
     delay: Delay,
     shimmer: Shimmer,
     gapper: Gapper,
+    reverb: Reverb,
+    distortion: Distortion,
     arp: Arpeggiator,
     /// Whether the arp was enabled on the previous sample — used to detect
     /// disable transitions so a final note_off can flush any held voice.
@@ -69,6 +73,8 @@ impl Default for SubtractiveSynth {
             delay: Delay::new(sample_rate),
             shimmer: Shimmer::new(sample_rate),
             gapper: Gapper::new(sample_rate),
+            reverb: Reverb::new(sample_rate),
+            distortion: Distortion::new(),
             arp: Arpeggiator::new(sample_rate),
             arp_was_enabled: false,
             sample_rate,
@@ -284,6 +290,7 @@ impl Plugin for SubtractiveSynth {
         self.delay.set_sample_rate(self.sample_rate);
         self.shimmer.set_sample_rate(self.sample_rate);
         self.gapper.set_sample_rate(self.sample_rate);
+        self.reverb.set_sample_rate(self.sample_rate);
         self.arp.set_sample_rate(self.sample_rate);
         self.cached_osc1_params = None;
         self.cached_osc1_pre = None;
@@ -300,6 +307,8 @@ impl Plugin for SubtractiveSynth {
         self.delay.reset();
         self.shimmer.reset();
         self.gapper.reset();
+        self.reverb.reset();
+        self.distortion.reset();
         self.arp.reset();
         self.arp_was_enabled = false;
     }
@@ -311,11 +320,26 @@ impl Plugin for SubtractiveSynth {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let max_voices = (self.params.num_voices.value() as usize).min(MAX_VOICES);
-        let chorus_enabled = self.params.chorus.enabled.value();
-        let delay_enabled  = self.params.delay.enabled.value();
-        let shimmer_enabled = self.params.shimmer.enabled.value();
-        let gapper_enabled = self.params.gapper.enabled.value();
-        let fx_active = chorus_enabled || delay_enabled || shimmer_enabled || gapper_enabled;
+        let chorus_enabled     = self.params.chorus.enabled.value();
+        let delay_enabled      = self.params.delay.enabled.value();
+        let shimmer_enabled    = self.params.shimmer.enabled.value();
+        let gapper_enabled     = self.params.gapper.enabled.value();
+        let reverb_enabled     = self.params.reverb.enabled.value();
+        let distortion_enabled = self.params.distortion.enabled.value();
+        let fx_active = chorus_enabled || delay_enabled || shimmer_enabled
+            || gapper_enabled || reverb_enabled || distortion_enabled;
+
+        // Build sorted FX order once per DAW buffer. Each entry is (position, fx_index).
+        // fx_index: 0=chorus, 1=delay, 2=shimmer, 3=gapper, 4=reverb, 5=distortion
+        let mut sorted_fx: [(i32, u8); 6] = [
+            (self.params.fx_order.chorus.value(),     0),
+            (self.params.fx_order.delay.value(),      1),
+            (self.params.fx_order.shimmer.value(),    2),
+            (self.params.fx_order.gapper.value(),     3),
+            (self.params.fx_order.reverb.value(),     4),
+            (self.params.fx_order.distortion.value(), 5),
+        ];
+        sorted_fx.sort_unstable_by_key(|&(pos, _)| pos);
 
         // Transport info captured once — stable across the whole DAW buffer.
         let transport = context.transport();
@@ -498,25 +522,54 @@ impl Plugin for SubtractiveSynth {
                      rfx!(self.params.gapper.depth.smoothed))
                 } else { (0.0, 0.0, 0.0) };
 
+                let (rv_size, rv_damp, rv_width, rv_mix) = if reverb_enabled {
+                    (rfx!(self.params.reverb.room_size.smoothed),
+                     rfx!(self.params.reverb.damping.smoothed),
+                     rfx!(self.params.reverb.width.smoothed),
+                     rfx!(self.params.reverb.mix.smoothed))
+                } else { (0.0, 0.0, 0.0, 0.0) };
+
+                let (dst_drive, dst_tone, dst_mix) = if distortion_enabled {
+                    (rfx!(self.params.distortion.drive.smoothed),
+                     rfx!(self.params.distortion.tone.smoothed),
+                     rfx!(self.params.distortion.mix.smoothed))
+                } else { (0.0, 0.0, 0.0) };
+                let dst_type = self.params.distortion.dist_type.value();
+
                 for i in 0..block_len {
                     let (mut l, mut r) = (mix_l[i], mix_r[i]);
-                    if chorus_enabled {
-                        (l, r) = self.chorus.process(l, r, ch_rate, ch_depth, ch_mix);
-                    }
-                    if delay_enabled {
-                        (l, r) = self.delay.process(l, r, dl_time, dl_fb, dl_tone, dl_mix);
-                    }
-                    if shimmer_enabled {
-                        (l, r) = self.shimmer.process(l, r, sh_time, sh_fb, sh_mix);
-                    }
-                    if gapper_enabled {
-                        let host_beats = if playing {
-                            block_start_beats.map(|b| b + (pos + i) as f64 * beats_per_sample)
-                        } else { None };
-                        (l, r) = self.gapper.process(
-                            l, r, host_beats, gapper_rate_beats,
-                            tempo_bpm, gp_duty, gp_smooth, gp_depth,
-                        );
+                    for &(_, fx_id) in &sorted_fx {
+                        match fx_id {
+                            0 if chorus_enabled => {
+                                (l, r) = self.chorus.process(l, r, ch_rate, ch_depth, ch_mix);
+                            }
+                            1 if delay_enabled => {
+                                (l, r) = self.delay.process(l, r, dl_time, dl_fb, dl_tone, dl_mix);
+                            }
+                            2 if shimmer_enabled => {
+                                (l, r) = self.shimmer.process(l, r, sh_time, sh_fb, sh_mix);
+                            }
+                            3 if gapper_enabled => {
+                                let host_beats = if playing {
+                                    block_start_beats.map(|b| b + (pos + i) as f64 * beats_per_sample)
+                                } else { None };
+                                (l, r) = self.gapper.process(
+                                    l, r, host_beats, gapper_rate_beats,
+                                    tempo_bpm, gp_duty, gp_smooth, gp_depth,
+                                );
+                            }
+                            4 if reverb_enabled => {
+                                (l, r) = self.reverb.process(
+                                    l, r, rv_size, rv_damp, rv_width, rv_mix,
+                                );
+                            }
+                            5 if distortion_enabled => {
+                                (l, r) = self.distortion.process(
+                                    l, r, dst_drive, dst_type, dst_tone, dst_mix,
+                                );
+                            }
+                            _ => {}
+                        }
                     }
                     mix_l[i] = l;
                     mix_r[i] = r;

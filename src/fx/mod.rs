@@ -6,5 +6,7 @@
 
 pub mod chorus;
 pub mod delay;
+pub mod distortion;
 pub mod gapper;
+pub mod reverb;
 pub mod shimmer;

@@ -11,7 +11,7 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 
-use crate::params::{ArpPattern, ArpRoot, ArpScale, FilterType, SyncRate, SynthParams, Waveform};
+use crate::params::{ArpPattern, ArpRoot, ArpScale, DistType, FilterType, SyncRate, SynthParams, Waveform};
 
 #[derive(Clone, Copy)]
 pub struct OscPreset {
@@ -89,11 +89,33 @@ pub struct GapperPreset {
 }
 
 #[derive(Clone, Copy)]
+pub struct ReverbPreset {
+    pub room_size: f32,
+    pub damping: f32,
+    pub width: f32,
+    pub mix: f32,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct DistortionPreset {
+    pub drive: f32,
+    pub dist_type: DistType,
+    pub tone: f32,
+    pub mix: f32,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Copy)]
 pub struct FxPreset {
     pub chorus: ChorusPreset,
     pub delay: DelayPreset,
     pub shimmer: ShimmerPreset,
     pub gapper: GapperPreset,
+    pub reverb: ReverbPreset,
+    pub distortion: DistortionPreset,
+    /// FX chain order: [chorus, delay, shimmer, gapper, reverb, distortion] positions (1-6)
+    pub fx_order: [i32; 6],
 }
 
 #[derive(Clone, Copy)]
@@ -191,8 +213,14 @@ const fn sh(time_ms: f32, feedback: f32, mix: f32, enabled: bool) -> ShimmerPres
 const fn gp(rate: SyncRate, duty: f32, smooth: f32, depth: f32, enabled: bool) -> GapperPreset {
     GapperPreset { rate, duty, smooth, depth, enabled }
 }
+const fn rv(room_size: f32, damping: f32, width: f32, mix: f32, enabled: bool) -> ReverbPreset {
+    ReverbPreset { room_size, damping, width, mix, enabled }
+}
+const fn dst(drive: f32, dist_type: DistType, tone: f32, mix: f32, enabled: bool) -> DistortionPreset {
+    DistortionPreset { drive, dist_type, tone, mix, enabled }
+}
 const fn fx(chorus: ChorusPreset, delay: DelayPreset, shimmer: ShimmerPreset, gapper: GapperPreset) -> FxPreset {
-    FxPreset { chorus, delay, shimmer, gapper }
+    FxPreset { chorus, delay, shimmer, gapper, reverb: REV_OFF, distortion: DST_OFF, fx_order: [1,2,3,4,5,6] }
 }
 const fn ap(pattern: ArpPattern, rate: SyncRate, octaves: i32, gate: f32, enabled: bool) -> ArpPreset {
     ArpPreset {
@@ -223,6 +251,8 @@ const CHR_OFF: ChorusPreset = ch(0.5, 0.5, 0.35, false);
 const DLY_OFF: DelayPreset = dl(350.0, 0.35, 0.6, 0.25, false);
 const SHM_OFF: ShimmerPreset = sh(500.0, 0.45, 0.35, false);
 const GAP_OFF: GapperPreset = gp(SyncRate::Eighth, 0.5, 0.1, 1.0, false);
+const REV_OFF: ReverbPreset = rv(0.5, 0.5, 1.0, 0.25, false);
+const DST_OFF: DistortionPreset = dst(2.0, DistType::Soft, 0.8, 0.5, false);
 const FX_OFF: FxPreset = fx(CHR_OFF, DLY_OFF, SHM_OFF, GAP_OFF);
 const ARP_OFF: ArpPreset = ap(ArpPattern::Up, SyncRate::Sixteenth, 1, 0.5, false);
 
@@ -1805,6 +1835,25 @@ fn apply_fx(src: &FxPreset, params: &Arc<SynthParams>, ctx: &dyn GuiContext) {
     set_float(ctx, &params.gapper.smooth, src.gapper.smooth);
     set_float(ctx, &params.gapper.depth, src.gapper.depth);
     set_bool(ctx, &params.gapper.enabled, src.gapper.enabled);
+
+    set_float(ctx, &params.reverb.room_size, src.reverb.room_size);
+    set_float(ctx, &params.reverb.damping, src.reverb.damping);
+    set_float(ctx, &params.reverb.width, src.reverb.width);
+    set_float(ctx, &params.reverb.mix, src.reverb.mix);
+    set_bool(ctx, &params.reverb.enabled, src.reverb.enabled);
+
+    set_float(ctx, &params.distortion.drive, src.distortion.drive);
+    set_enum(ctx, &params.distortion.dist_type, src.distortion.dist_type);
+    set_float(ctx, &params.distortion.tone, src.distortion.tone);
+    set_float(ctx, &params.distortion.mix, src.distortion.mix);
+    set_bool(ctx, &params.distortion.enabled, src.distortion.enabled);
+
+    set_int(ctx, &params.fx_order.chorus, src.fx_order[0]);
+    set_int(ctx, &params.fx_order.delay, src.fx_order[1]);
+    set_int(ctx, &params.fx_order.shimmer, src.fx_order[2]);
+    set_int(ctx, &params.fx_order.gapper, src.fx_order[3]);
+    set_int(ctx, &params.fx_order.reverb, src.fx_order[4]);
+    set_int(ctx, &params.fx_order.distortion, src.fx_order[5]);
 }
 
 fn apply_arp(src: &ArpPreset, params: &Arc<SynthParams>, ctx: &dyn GuiContext) {
