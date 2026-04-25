@@ -15,10 +15,11 @@ The name is a nod to the Ruhr area. The logo was made by another AI. It's AIs al
 Quite a bit, actually. Don't tell anyone we were surprised too.
 
 - **2 oscillators** per voice — sine, saw, square, triangle, and noise (for when you want your music to sound like a broken radio)
+- **FM synthesis** — Osc2 phase-modulates Osc1. One knob, zero patch cables, surprisingly metallic results. Hi-hats, electric pianos, bells, things that go *bwang* — all done via phase modulation
 - **Unison detuning with stereo spread** — up to 7 slightly-out-of-tune copies per oscillator, fanned across the stereo field, because one saw wave is never enough
 - **2 filters in series** — lowpass, highpass, bandpass, notch; each with resonance, drive, and envelope modulation. Cytomic-style state variable filter that we definitely understood on the first try
 - **4 envelopes** — amplitude, two filter envelopes, and a pitch envelope for kicks that go *bwoooom*
-- **Polyphony** — up to 32 voices, with voice stealing for when you hold down too many keys
+- **Polyphony** — up to 32 voices, with voice stealing for when you hold down too many keys. FM-heavy presets automatically use fewer voices so your CPU doesn't file a restraining order
 - **An effects chain** — chorus, ping-pong delay, octave-up shimmer, and a host-synced trance gate. We got carried away
 - **An arpeggiator with scale-lock and scale-walk** — hold one key, get a full scale run; hold a chord, keep it in key across octaves
 - **~119 factory presets** across 11 categories — from Fat Bass to Haunted Hall to Alf, each one a best guess at what those things are supposed to sound like
@@ -26,7 +27,7 @@ Quite a bit, actually. Don't tell anyone we were surprised too.
 
 ## What can't it do?
 
-LFOs. Wavetables. Modulation matrix. FM. Sidechain. Anything a *professional* synthesizer would quietly list under "of course it does that." But hey, it makes sound come out, and sometimes that sound is even pleasant.
+LFOs. Wavetables. Modulation matrix. Sidechain. Anything a *professional* synthesizer would quietly list under "of course it does that." But hey, it makes sound come out, and sometimes that sound is even pleasant.
 
 ## Hear it first
 
@@ -63,6 +64,7 @@ Or grab a prebuilt bundle from GitHub Actions — CI produces Linux, Windows, an
 
 - [nih-plug](https://github.com/robbert-vdh/nih-plug) — the only Rust VST3 framework that exists, conveniently also the best one
 - [nih_plug_vizia](https://github.com/robbert-vdh/nih-plug) — for the GUI, because declarative reactive UI in Rust is apparently a thing now
+- Block-based DSP processing (64-sample sub-blocks) — `VoiceParams` built once per block via `Smoother::next_block`, voices run tight per-block inner loops. Professional synth architecture that we did not invent but did correctly copy
 - PolyBLEP anti-aliasing — so the saw waves don't sound like angry bees
 - Fast exp2 approximation — because `powf()` 200 times per sample was a lifestyle choice we reconsidered
 

@@ -15,7 +15,7 @@ use crate::fx::chorus::Chorus;
 use crate::fx::delay::Delay;
 use crate::fx::gapper::Gapper;
 use crate::fx::shimmer::Shimmer;
-use crate::params::{FilterParams, OscParams, SynthParams};
+use crate::params::SynthParams;
 use crate::voice::{
     EnvelopeVoiceParams, FilterVoiceParams, OscBankPrecomp, OscVoiceParams,
     PitchEnvVoiceParams, Voice, VoiceParams,
@@ -23,6 +23,12 @@ use crate::voice::{
 
 /// Maximum number of polyphonic voices (pre-allocated pool).
 const MAX_VOICES: usize = 32;
+
+/// Sub-block size for block-based processing. Parameters are read once per
+/// sub-block (advancing smoothers by this many steps), then shared across all
+/// voices for the block. MIDI events split sub-blocks at sample-accurate
+/// boundaries — no timing degradation, at most ~1.45 ms arp quantisation.
+pub const BLOCK_SIZE: usize = 64;
 
 pub struct SubtractiveSynth {
     params: Arc<SynthParams>,
@@ -102,51 +108,125 @@ impl SubtractiveSynth {
         }
     }
 
-    #[inline]
-    fn osc_voice_params(params: &OscParams) -> OscVoiceParams {
-        OscVoiceParams {
-            waveform: params.waveform.value(),
-            level: params.level.smoothed.next(),
-            detune_cents: params.detune.smoothed.next(),
-            octave: params.octave.value(),
-            enabled: params.enabled.value(),
-            unison_voices: params.unison_voices.value(),
-            unison_spread: params.unison_spread.smoothed.next(),
-            pan: params.pan.smoothed.next(),
-            stereo_spread: params.stereo_spread.smoothed.next(),
-        }
-    }
+    /// Build a `VoiceParams` snapshot for one sub-block.
+    ///
+    /// Each `FloatParam` smoother is advanced by exactly `block_len` steps via
+    /// `next_block`, keeping smoother timing identical to per-sample reads.
+    /// A single 64-element stack buffer is reused across all reads — only the
+    /// first value (`tmp[0]`) is used as the representative for the block.
+    fn build_voice_params(&mut self, block_len: usize) -> VoiceParams {
+        let mut tmp = [0.0f32; BLOCK_SIZE];
 
-    #[inline]
-    fn filter_voice_params(params: &FilterParams) -> FilterVoiceParams {
-        FilterVoiceParams {
-            filter_type: params.filter_type.value(),
-            cutoff: params.cutoff.smoothed.next(),
-            resonance: params.resonance.smoothed.next(),
-            drive: params.drive.smoothed.next(),
-            env_amount: params.env_amount.smoothed.next(),
-            enabled: params.enabled.value(),
+        macro_rules! rd {
+            ($s:expr) => {{
+                $s.next_block(&mut tmp, block_len);
+                tmp[0]
+            }};
         }
-    }
 
-    #[inline]
-    fn env_voice_params(params: &crate::params::EnvelopeParams) -> EnvelopeVoiceParams {
-        EnvelopeVoiceParams {
-            attack: params.attack.smoothed.next(),
-            decay: params.decay.smoothed.next(),
-            sustain: params.sustain.smoothed.next(),
-            release: params.release.smoothed.next(),
-        }
-    }
+        let osc1 = OscVoiceParams {
+            waveform:       self.params.osc1.waveform.value(),
+            level:          rd!(self.params.osc1.level.smoothed),
+            detune_cents:   rd!(self.params.osc1.detune.smoothed),
+            octave:         self.params.osc1.octave.value(),
+            enabled:        self.params.osc1.enabled.value(),
+            unison_voices:  self.params.osc1.unison_voices.value(),
+            unison_spread:  rd!(self.params.osc1.unison_spread.smoothed),
+            pan:            rd!(self.params.osc1.pan.smoothed),
+            stereo_spread:  rd!(self.params.osc1.stereo_spread.smoothed),
+        };
+        let osc2 = OscVoiceParams {
+            waveform:       self.params.osc2.waveform.value(),
+            level:          rd!(self.params.osc2.level.smoothed),
+            detune_cents:   rd!(self.params.osc2.detune.smoothed),
+            octave:         self.params.osc2.octave.value(),
+            enabled:        self.params.osc2.enabled.value(),
+            unison_voices:  self.params.osc2.unison_voices.value(),
+            unison_spread:  rd!(self.params.osc2.unison_spread.smoothed),
+            pan:            rd!(self.params.osc2.pan.smoothed),
+            stereo_spread:  rd!(self.params.osc2.stereo_spread.smoothed),
+        };
 
-    #[inline]
-    fn pitch_env_voice_params(params: &crate::params::PitchEnvParams) -> PitchEnvVoiceParams {
-        PitchEnvVoiceParams {
-            attack: params.attack.smoothed.next(),
-            decay: params.decay.smoothed.next(),
-            sustain: params.sustain.smoothed.next(),
-            release: params.release.smoothed.next(),
-            amount: params.amount.smoothed.next(),
+        let osc1_pre = match self.cached_osc1_pre {
+            Some(pre) if self.cached_osc1_params == Some(osc1) => pre,
+            _ => {
+                let pre = OscBankPrecomp::compute(&osc1);
+                self.cached_osc1_params = Some(osc1);
+                self.cached_osc1_pre   = Some(pre);
+                pre
+            }
+        };
+        let osc2_pre = match self.cached_osc2_pre {
+            Some(pre) if self.cached_osc2_params == Some(osc2) => pre,
+            _ => {
+                let pre = OscBankPrecomp::compute(&osc2);
+                self.cached_osc2_params = Some(osc2);
+                self.cached_osc2_pre   = Some(pre);
+                pre
+            }
+        };
+
+        let filter1 = FilterVoiceParams {
+            filter_type: self.params.filter1.filter_type.value(),
+            cutoff:      rd!(self.params.filter1.cutoff.smoothed),
+            resonance:   rd!(self.params.filter1.resonance.smoothed),
+            drive:       rd!(self.params.filter1.drive.smoothed),
+            env_amount:  rd!(self.params.filter1.env_amount.smoothed),
+            enabled:     self.params.filter1.enabled.value(),
+        };
+        let filter2 = FilterVoiceParams {
+            filter_type: self.params.filter2.filter_type.value(),
+            cutoff:      rd!(self.params.filter2.cutoff.smoothed),
+            resonance:   rd!(self.params.filter2.resonance.smoothed),
+            drive:       rd!(self.params.filter2.drive.smoothed),
+            env_amount:  rd!(self.params.filter2.env_amount.smoothed),
+            enabled:     self.params.filter2.enabled.value(),
+        };
+
+        let filter1_coeffs = if filter1.enabled && filter1.env_amount == 0.0 {
+            Some(SvfCoeffs::compute(
+                filter1.cutoff, filter1.resonance, filter1.drive,
+                filter1.filter_type, self.pi_over_fs, self.nyquist,
+            ))
+        } else { None };
+        let filter2_coeffs = if filter2.enabled && filter2.env_amount == 0.0 {
+            Some(SvfCoeffs::compute(
+                filter2.cutoff, filter2.resonance, filter2.drive,
+                filter2.filter_type, self.pi_over_fs, self.nyquist,
+            ))
+        } else { None };
+
+        VoiceParams {
+            osc1, osc2, osc1_pre, osc2_pre,
+            filter1, filter2, filter1_coeffs, filter2_coeffs,
+            amp_env: EnvelopeVoiceParams {
+                attack:  rd!(self.params.amp_env.attack.smoothed),
+                decay:   rd!(self.params.amp_env.decay.smoothed),
+                sustain: rd!(self.params.amp_env.sustain.smoothed),
+                release: rd!(self.params.amp_env.release.smoothed),
+            },
+            filter1_env: EnvelopeVoiceParams {
+                attack:  rd!(self.params.filter1_env.attack.smoothed),
+                decay:   rd!(self.params.filter1_env.decay.smoothed),
+                sustain: rd!(self.params.filter1_env.sustain.smoothed),
+                release: rd!(self.params.filter1_env.release.smoothed),
+            },
+            filter2_env: EnvelopeVoiceParams {
+                attack:  rd!(self.params.filter2_env.attack.smoothed),
+                decay:   rd!(self.params.filter2_env.decay.smoothed),
+                sustain: rd!(self.params.filter2_env.sustain.smoothed),
+                release: rd!(self.params.filter2_env.release.smoothed),
+            },
+            pitch_env: PitchEnvVoiceParams {
+                attack:  rd!(self.params.pitch_env.attack.smoothed),
+                decay:   rd!(self.params.pitch_env.decay.smoothed),
+                sustain: rd!(self.params.pitch_env.sustain.smoothed),
+                release: rd!(self.params.pitch_env.release.smoothed),
+                amount:  rd!(self.params.pitch_env.amount.smoothed),
+            },
+            pi_over_fs: self.pi_over_fs,
+            nyquist:    self.nyquist,
+            osc1_fm_amount: rd!(self.params.osc1.fm_amount.smoothed),
         }
     }
 
@@ -232,31 +312,29 @@ impl Plugin for SubtractiveSynth {
     ) -> ProcessStatus {
         let max_voices = (self.params.num_voices.value() as usize).min(MAX_VOICES);
         let chorus_enabled = self.params.chorus.enabled.value();
-        let delay_enabled = self.params.delay.enabled.value();
+        let delay_enabled  = self.params.delay.enabled.value();
         let shimmer_enabled = self.params.shimmer.enabled.value();
         let gapper_enabled = self.params.gapper.enabled.value();
         let fx_active = chorus_enabled || delay_enabled || shimmer_enabled || gapper_enabled;
 
-        // Transport info for host-synced effects (captured once per block).
+        // Transport info captured once — stable across the whole DAW buffer.
         let transport = context.transport();
-        let tempo_bpm = transport.tempo.unwrap_or(120.0) as f32;
+        let tempo_bpm        = transport.tempo.unwrap_or(120.0) as f32;
         let block_start_beats = transport.pos_beats();
-        let playing = transport.playing;
+        let playing          = transport.playing;
         let beats_per_sample = tempo_bpm as f64 / 60.0 / self.sample_rate as f64;
         let gapper_rate_beats = self.params.gapper.rate.value().beats_per_cycle();
 
-        // Arp config (stable across block).
-        let arp_enabled = self.params.arp.enabled.value();
-        let arp_pattern = self.params.arp.pattern.value();
+        // Arp config (stable across the DAW buffer).
+        let arp_enabled    = self.params.arp.enabled.value();
+        let arp_pattern    = self.params.arp.pattern.value();
         let arp_rate_beats = self.params.arp.rate.value().beats_per_cycle();
-        let arp_octaves = self.params.arp.octaves.value() as u8;
-        let arp_scale = self.params.arp.scale.value();
-        let arp_root = self.params.arp.root.value();
-        let arp_walk = self.params.arp.walk.value();
-        let arp_step = self.params.arp.step.value() as u8;
+        let arp_octaves    = self.params.arp.octaves.value() as u8;
+        let arp_scale      = self.params.arp.scale.value();
+        let arp_root       = self.params.arp.root.value();
+        let arp_walk       = self.params.arp.walk.value();
+        let arp_step       = self.params.arp.step.value() as u8;
 
-        // Handle enable→disable transition: release any arp-gated note so
-        // voices don't get stuck.
         if self.arp_was_enabled && !arp_enabled {
             if let Some(note) = self.arp.flush() {
                 self.note_off(note);
@@ -264,37 +342,74 @@ impl Plugin for SubtractiveSynth {
         }
         self.arp_was_enabled = arp_enabled;
 
+        let total_samples = buffer.samples();
+        // Raw channel slices — indexed as output[ch][sample].
+        let output = buffer.as_slice();
+
         let mut next_event = context.next_event();
         let mut any_active = self.active_voice_count(max_voices) > 0
             || next_event.is_some()
             || (arp_enabled && self.arp.has_notes());
 
-        for (sample_id, channel_samples) in buffer.iter_samples().enumerate() {
-            // Drain any MIDI events that should fire at this sample.
-            while let Some(event) = next_event {
-                if event.timing() as usize > sample_id {
-                    break;
+        // Mix buffers reused across sub-blocks (stack, 512 B total).
+        let mut mix_l = [0.0f32; BLOCK_SIZE];
+        let mut mix_r = [0.0f32; BLOCK_SIZE];
+
+        let mut pos = 0usize;
+        while pos < total_samples {
+            // ── Sub-block boundary ─────────────────────────────────────────
+            // Split at the next MIDI event so note_on/off land on the exact
+            // sample, then cap at BLOCK_SIZE.
+            let block_end = {
+                let natural_end = (pos + BLOCK_SIZE).min(total_samples);
+                match next_event {
+                    Some(ev) => {
+                        let ev_pos = ev.timing() as usize;
+                        if ev_pos > pos && ev_pos < natural_end { ev_pos } else { natural_end }
+                    }
+                    None => natural_end,
                 }
+            };
+            let block_len = block_end - pos;
+
+            // ── 1. Arp pre-pass ────────────────────────────────────────────
+            // Per-sample arp tick so host-beat timing stays accurate.
+            // Fires note events into the voice pool before voice processing.
+            if arp_enabled {
+                for s in pos..block_end {
+                    let host_beats = if playing {
+                        block_start_beats.map(|b| b + s as f64 * beats_per_sample)
+                    } else { None };
+                    let gate = self.params.arp.gate.smoothed.next();
+                    let tick = self.arp.tick(
+                        host_beats, arp_rate_beats, tempo_bpm,
+                        arp_pattern, arp_octaves, arp_scale, arp_root,
+                        arp_walk, arp_step, gate,
+                    );
+                    if let Some(n) = tick.note_off { self.note_off(n); }
+                    if let Some((n, v)) = tick.note_on {
+                        self.note_on(n, v);
+                        any_active = true;
+                    }
+                }
+            }
+
+            // ── 2. MIDI drain ──────────────────────────────────────────────
+            // Consume all events whose timing falls before block_end.
+            while let Some(event) = next_event {
+                if event.timing() as usize >= block_end { break; }
                 match event {
                     NoteEvent::NoteOn { note, velocity, .. } => {
-                        if arp_enabled {
-                            self.arp.add_held(note, velocity);
-                        } else {
-                            self.note_on(note, velocity);
-                        }
+                        if arp_enabled { self.arp.add_held(note, velocity); }
+                        else { self.note_on(note, velocity); }
                         any_active = true;
                     }
                     NoteEvent::NoteOff { note, .. } => {
-                        if arp_enabled {
-                            self.arp.remove_held(note);
-                        } else {
-                            self.note_off(note);
-                        }
+                        if arp_enabled { self.arp.remove_held(note); }
+                        else { self.note_off(note); }
                     }
                     NoteEvent::Choke { note, .. } => {
-                        if arp_enabled {
-                            self.arp.remove_held(note);
-                        }
+                        if arp_enabled { self.arp.remove_held(note); }
                         for voice in &mut self.voices {
                             if voice.is_active() && voice.note == note {
                                 voice.reset();
@@ -306,194 +421,115 @@ impl Plugin for SubtractiveSynth {
                 next_event = context.next_event();
             }
 
-            // Per-sample arp stepping.
-            if arp_enabled {
-                let host_beats = if playing {
-                    block_start_beats.map(|b| b + sample_id as f64 * beats_per_sample)
-                } else {
-                    None
-                };
-                let gate = self.params.arp.gate.smoothed.next();
-                let tick = self.arp.tick(
-                    host_beats,
-                    arp_rate_beats,
-                    tempo_bpm,
-                    arp_pattern,
-                    arp_octaves,
-                    arp_scale,
-                    arp_root,
-                    arp_walk,
-                    arp_step,
-                    gate,
-                );
-                if let Some(n) = tick.note_off {
-                    self.note_off(n);
-                }
-                if let Some((n, v)) = tick.note_on {
-                    self.note_on(n, v);
-                    any_active = true;
-                }
-            }
-
-            // Fast path: skip everything only when voices are silent AND no
-            // FX are active. Delay feedback needs the chain running even on
-            // zero input so tails decay naturally.
+            // ── Fast path ──────────────────────────────────────────────────
             if !any_active && !fx_active {
-                for sample in channel_samples {
-                    *sample = 0.0;
+                for i in 0..block_len {
+                    output[0][pos + i] = 0.0;
+                    output[1][pos + i] = 0.0;
                 }
+                pos = block_end;
                 continue;
             }
 
-            // Voice mix.
-            let (mut mix_l, mut mix_r) = (0.0f32, 0.0f32);
-            let master_gain = self.params.master_gain.smoothed.next();
+            // ── 3. Voice processing ────────────────────────────────────────
+            // VoiceParams built ONCE per sub-block; all smoothers advance by
+            // block_len steps so timing is equivalent to per-sample reads.
+            for i in 0..block_len { mix_l[i] = 0.0; mix_r[i] = 0.0; }
+
+            // master_gain smoother also advances by block_len steps.
+            let master_gain = {
+                let mut g = [0.0f32; BLOCK_SIZE];
+                self.params.master_gain.smoothed.next_block(&mut g, block_len);
+                g[0]
+            };
+
             if any_active {
-                let osc1 = Self::osc_voice_params(&self.params.osc1);
-                let osc2 = Self::osc_voice_params(&self.params.osc2);
-
-                // Reuse previous sample's precomputation if the source
-                // params haven't moved (smoothers idle, no automation).
-                let osc1_pre = match self.cached_osc1_pre {
-                    Some(pre) if self.cached_osc1_params == Some(osc1) => pre,
-                    _ => {
-                        let pre = OscBankPrecomp::compute(&osc1);
-                        self.cached_osc1_params = Some(osc1);
-                        self.cached_osc1_pre = Some(pre);
-                        pre
-                    }
-                };
-                let osc2_pre = match self.cached_osc2_pre {
-                    Some(pre) if self.cached_osc2_params == Some(osc2) => pre,
-                    _ => {
-                        let pre = OscBankPrecomp::compute(&osc2);
-                        self.cached_osc2_params = Some(osc2);
-                        self.cached_osc2_pre = Some(pre);
-                        pre
-                    }
-                };
-
-                let filter1 = Self::filter_voice_params(&self.params.filter1);
-                let filter2 = Self::filter_voice_params(&self.params.filter2);
-
-                // When the filter envelope isn't modulating cutoff, the SVF
-                // coefficients are identical across every voice in the pool,
-                // so the expensive tan() can run once per sample instead of
-                // once per voice per slot.
-                let filter1_coeffs = if filter1.enabled && filter1.env_amount == 0.0 {
-                    Some(SvfCoeffs::compute(
-                        filter1.cutoff,
-                        filter1.resonance,
-                        filter1.drive,
-                        filter1.filter_type,
-                        self.pi_over_fs,
-                        self.nyquist,
-                    ))
-                } else {
-                    None
-                };
-                let filter2_coeffs = if filter2.enabled && filter2.env_amount == 0.0 {
-                    Some(SvfCoeffs::compute(
-                        filter2.cutoff,
-                        filter2.resonance,
-                        filter2.drive,
-                        filter2.filter_type,
-                        self.pi_over_fs,
-                        self.nyquist,
-                    ))
-                } else {
-                    None
-                };
-
-                let voice_params = VoiceParams {
-                    osc1,
-                    osc2,
-                    osc1_pre,
-                    osc2_pre,
-                    filter1,
-                    filter2,
-                    filter1_coeffs,
-                    filter2_coeffs,
-                    amp_env: Self::env_voice_params(&self.params.amp_env),
-                    filter1_env: Self::env_voice_params(&self.params.filter1_env),
-                    filter2_env: Self::env_voice_params(&self.params.filter2_env),
-                    pitch_env: Self::pitch_env_voice_params(&self.params.pitch_env),
-                    pi_over_fs: self.pi_over_fs,
-                    nyquist: self.nyquist,
-                    osc1_fm_amount: self.params.osc1.fm_amount.smoothed.next(),
-                };
-
+                let voice_params = self.build_voice_params(block_len);
                 let mut found_active = false;
                 for voice in self.voices.iter_mut().take(max_voices) {
                     if voice.is_active() {
-                        let (l, r) = voice.process(&voice_params);
-                        mix_l += l;
-                        mix_r += r;
+                        voice.process_block(
+                            &voice_params,
+                            &mut mix_l[..block_len],
+                            &mut mix_r[..block_len],
+                        );
                         found_active = true;
                     }
                 }
-                mix_l *= master_gain;
-                mix_r *= master_gain;
-
-                if !found_active {
-                    any_active = false;
+                if !found_active { any_active = false; }
+                for i in 0..block_len {
+                    mix_l[i] *= master_gain;
+                    mix_r[i] *= master_gain;
                 }
             }
 
-            // FX chain (chorus → delay). Always runs its smoothers and DSP
-            // when enabled so tails continue after voices release.
-            if chorus_enabled {
-                let rate = self.params.chorus.rate.smoothed.next();
-                let depth = self.params.chorus.depth.smoothed.next();
-                let mix = self.params.chorus.mix.smoothed.next();
-                let (l, r) = self.chorus.process(mix_l, mix_r, rate, depth, mix);
-                mix_l = l;
-                mix_r = r;
-            }
-            if delay_enabled {
-                let time_ms = self.params.delay.time_ms.smoothed.next();
-                let feedback = self.params.delay.feedback.smoothed.next();
-                let tone = self.params.delay.tone.smoothed.next();
-                let mix = self.params.delay.mix.smoothed.next();
-                let (l, r) = self.delay.process(mix_l, mix_r, time_ms, feedback, tone, mix);
-                mix_l = l;
-                mix_r = r;
-            }
-            if shimmer_enabled {
-                let time_ms = self.params.shimmer.time_ms.smoothed.next();
-                let feedback = self.params.shimmer.feedback.smoothed.next();
-                let mix = self.params.shimmer.mix.smoothed.next();
-                let (l, r) = self.shimmer.process(mix_l, mix_r, time_ms, feedback, mix);
-                mix_l = l;
-                mix_r = r;
-            }
-            if gapper_enabled {
-                let duty = self.params.gapper.duty.smoothed.next();
-                let smooth = self.params.gapper.smooth.smoothed.next();
-                let depth = self.params.gapper.depth.smoothed.next();
-                let host_beats = if playing {
-                    block_start_beats
-                        .map(|b| b + sample_id as f64 * beats_per_sample)
-                } else {
-                    None
-                };
-                let (l, r) = self.gapper.process(
-                    mix_l,
-                    mix_r,
-                    host_beats,
-                    gapper_rate_beats,
-                    tempo_bpm,
-                    duty,
-                    smooth,
-                    depth,
-                );
-                mix_l = l;
-                mix_r = r;
+            // ── 4. FX chain ────────────────────────────────────────────────
+            // Params read once per sub-block (smoothers advance by block_len).
+            // Gapper needs per-sample host_beats for sync; other FX use the
+            // block-start value which is indistinguishable at 64-sample blocks.
+            if fx_active {
+                let mut ft = [0.0f32; BLOCK_SIZE];
+                macro_rules! rfx {
+                    ($s:expr) => {{ $s.next_block(&mut ft, block_len); ft[0] }};
+                }
+
+                let (ch_rate, ch_depth, ch_mix) = if chorus_enabled {
+                    (rfx!(self.params.chorus.rate.smoothed),
+                     rfx!(self.params.chorus.depth.smoothed),
+                     rfx!(self.params.chorus.mix.smoothed))
+                } else { (0.0, 0.0, 0.0) };
+
+                let (dl_time, dl_fb, dl_tone, dl_mix) = if delay_enabled {
+                    (rfx!(self.params.delay.time_ms.smoothed),
+                     rfx!(self.params.delay.feedback.smoothed),
+                     rfx!(self.params.delay.tone.smoothed),
+                     rfx!(self.params.delay.mix.smoothed))
+                } else { (0.0, 0.0, 0.0, 0.0) };
+
+                let (sh_time, sh_fb, sh_mix) = if shimmer_enabled {
+                    (rfx!(self.params.shimmer.time_ms.smoothed),
+                     rfx!(self.params.shimmer.feedback.smoothed),
+                     rfx!(self.params.shimmer.mix.smoothed))
+                } else { (0.0, 0.0, 0.0) };
+
+                let (gp_duty, gp_smooth, gp_depth) = if gapper_enabled {
+                    (rfx!(self.params.gapper.duty.smoothed),
+                     rfx!(self.params.gapper.smooth.smoothed),
+                     rfx!(self.params.gapper.depth.smoothed))
+                } else { (0.0, 0.0, 0.0) };
+
+                for i in 0..block_len {
+                    let (mut l, mut r) = (mix_l[i], mix_r[i]);
+                    if chorus_enabled {
+                        (l, r) = self.chorus.process(l, r, ch_rate, ch_depth, ch_mix);
+                    }
+                    if delay_enabled {
+                        (l, r) = self.delay.process(l, r, dl_time, dl_fb, dl_tone, dl_mix);
+                    }
+                    if shimmer_enabled {
+                        (l, r) = self.shimmer.process(l, r, sh_time, sh_fb, sh_mix);
+                    }
+                    if gapper_enabled {
+                        let host_beats = if playing {
+                            block_start_beats.map(|b| b + (pos + i) as f64 * beats_per_sample)
+                        } else { None };
+                        (l, r) = self.gapper.process(
+                            l, r, host_beats, gapper_rate_beats,
+                            tempo_bpm, gp_duty, gp_smooth, gp_depth,
+                        );
+                    }
+                    mix_l[i] = l;
+                    mix_r[i] = r;
+                }
             }
 
-            for (ch, sample) in channel_samples.into_iter().enumerate() {
-                *sample = if ch == 0 { mix_l } else { mix_r };
+            // ── 5. Write to output ─────────────────────────────────────────
+            for i in 0..block_len {
+                output[0][pos + i] = mix_l[i];
+                output[1][pos + i] = mix_r[i];
             }
+
+            pos = block_end;
         }
 
         ProcessStatus::Normal

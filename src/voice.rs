@@ -251,9 +251,29 @@ impl Voice {
         self.pitch_env.reset();
     }
 
+    /// Accumulate one sub-block of audio into `mix_l` / `mix_r`.
+    /// `VoiceParams` are held constant across the block — build them once
+    /// per sub-block in the synth rather than once per sample.
+    #[inline]
+    pub fn process_block(
+        &mut self,
+        params: &VoiceParams,
+        mix_l: &mut [f32],
+        mix_r: &mut [f32],
+    ) {
+        if !self.is_active() {
+            return;
+        }
+        for i in 0..mix_l.len() {
+            let (l, r) = self.process_sample(params);
+            mix_l[i] += l;
+            mix_r[i] += r;
+        }
+    }
+
     /// Process a single sample and return the voice output (L, R).
     #[inline]
-    pub fn process(&mut self, params: &VoiceParams) -> (f32, f32) {
+    fn process_sample(&mut self, params: &VoiceParams) -> (f32, f32) {
         if !self.is_active() {
             return (0.0, 0.0);
         }
