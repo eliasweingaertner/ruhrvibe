@@ -513,35 +513,41 @@ fn tab_button(cx: &mut Context, label: &str, tab_idx: u32) {
 }
 
 fn build_synth_tab(cx: &mut Context) {
-    VStack::new(cx, |cx| {
-        build_osc_row(cx);
-        build_filter_row(cx);
-        build_env_row(cx);
-        build_bottom_row(cx);
+    ScrollView::new(cx, 0.0, 0.0, false, true, |cx| {
+        VStack::new(cx, |cx| {
+            build_osc_row(cx);
+            build_filter_row(cx);
+            build_env_row(cx);
+            build_bottom_row(cx);
+        })
+        .row_between(Pixels(6.0))
+        .height(Auto);
     })
-    .row_between(Pixels(6.0))
-    .height(Auto);
+    .height(Stretch(1.0));
 }
 
 fn build_fx_tab(cx: &mut Context) {
-    VStack::new(cx, |cx| {
-        HStack::new(cx, |cx| {
-            chorus_section(cx);
-            delay_section(cx);
+    ScrollView::new(cx, 0.0, 0.0, false, true, |cx| {
+        VStack::new(cx, |cx| {
+            HStack::new(cx, |cx| {
+                chorus_section(cx);
+                delay_section(cx);
+            })
+            .class("row-equal");
+            HStack::new(cx, |cx| {
+                shimmer_section(cx);
+                gapper_section(cx);
+            })
+            .class("row-equal");
+            HStack::new(cx, |cx| {
+                arp_section(cx);
+            })
+            .class("row-equal");
         })
-        .class("row-equal");
-        HStack::new(cx, |cx| {
-            shimmer_section(cx);
-            gapper_section(cx);
-        })
-        .class("row-equal");
-        HStack::new(cx, |cx| {
-            arp_section(cx);
-        })
-        .class("row-equal");
+        .row_between(Pixels(6.0))
+        .height(Auto);
     })
-    .row_between(Pixels(6.0))
-    .height(Auto);
+    .height(Stretch(1.0));
 }
 
 #[derive(Clone, Copy)]
