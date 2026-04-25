@@ -541,7 +541,6 @@ fn build_filters_tab(cx: &mut Context) {
 fn build_fx_tab(cx: &mut Context) {
     ScrollView::new(cx, 0.0, 0.0, false, true, |cx| {
         VStack::new(cx, |cx| {
-            fx_order_section(cx);
             HStack::new(cx, |cx| {
                 chorus_section(cx);
                 delay_section(cx);
@@ -676,6 +675,12 @@ fn osc_section(cx: &mut Context, title: &str, accent: &'static str, sel: OscSel)
 
 fn filter_section(cx: &mut Context, title: &str, accent: &'static str, sel: FilterSel) {
     section_container(cx, title, accent, move |cx| {
+        labeled_row(cx, "On", move |cx| {
+            match sel {
+                FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.enabled); }
+                FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.enabled); }
+            }
+        });
         labeled_row(cx, "Type", move |cx| {
             match sel {
                 FilterSel::Flt1 => { RadioGroup::new(cx, AppData::params, |p| &p.filter1.filter_type, FILTER_TYPE_LABELS); }
@@ -704,12 +709,6 @@ fn filter_section(cx: &mut Context, title: &str, accent: &'static str, sel: Filt
             match sel {
                 FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.env_amount); }
                 FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.env_amount); }
-            }
-        });
-        labeled_row(cx, "On", move |cx| {
-            match sel {
-                FilterSel::Flt1 => { ParamSlider::new(cx, AppData::params, |p| &p.filter1.enabled); }
-                FilterSel::Flt2 => { ParamSlider::new(cx, AppData::params, |p| &p.filter2.enabled); }
             }
         });
     });
@@ -767,7 +766,7 @@ fn master_section(cx: &mut Context) {
 
 fn chorus_section(cx: &mut Context) {
     section_container(cx, "CHORUS", "accent-chr", |cx| {
-        labeled_row(cx, "On",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.enabled); });
+        labeled_row(cx, "Pos",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.pos); });
         labeled_row(cx, "Rate",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.rate); });
         labeled_row(cx, "Depth", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.depth); });
         labeled_row(cx, "Mix",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.chorus.mix); });
@@ -776,7 +775,7 @@ fn chorus_section(cx: &mut Context) {
 
 fn delay_section(cx: &mut Context) {
     section_container(cx, "DELAY (PING-PONG)", "accent-dly", |cx| {
-        labeled_row(cx, "On",       |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.enabled); });
+        labeled_row(cx, "Pos",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.pos); });
         labeled_row(cx, "Time",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.time_ms); });
         labeled_row(cx, "Feedback", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.feedback); });
         labeled_row(cx, "Tone",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.delay.tone); });
@@ -786,7 +785,7 @@ fn delay_section(cx: &mut Context) {
 
 fn shimmer_section(cx: &mut Context) {
     section_container(cx, "SHIMMER (+1 OCT)", "accent-shm", |cx| {
-        labeled_row(cx, "On",       |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.enabled); });
+        labeled_row(cx, "Pos",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.pos); });
         labeled_row(cx, "Time",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.time_ms); });
         labeled_row(cx, "Feedback", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.feedback); });
         labeled_row(cx, "Mix",      |cx| { ParamSlider::new(cx, AppData::params, |p| &p.shimmer.mix); });
@@ -795,7 +794,7 @@ fn shimmer_section(cx: &mut Context) {
 
 fn gapper_section(cx: &mut Context) {
     section_container(cx, "GAPPER (HOST-SYNC)", "accent-gap", |cx| {
-        labeled_row(cx, "On",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.enabled); });
+        labeled_row(cx, "Pos",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.pos); });
         labeled_row(cx, "Rate",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.rate); });
         labeled_row(cx, "Duty",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.duty); });
         labeled_row(cx, "Smooth", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.gapper.smooth); });
@@ -805,11 +804,11 @@ fn gapper_section(cx: &mut Context) {
 
 fn reverb_section(cx: &mut Context) {
     section_container(cx, "REVERB (PLATE)", "accent-rev", |cx| {
-        labeled_row(cx, "On",     |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.enabled); });
-        labeled_row(cx, "Size",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.room_size); });
-        labeled_row(cx, "Damp",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.damping); });
-        labeled_row(cx, "Width",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.width); });
-        labeled_row(cx, "Mix",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.mix); });
+        labeled_row(cx, "Pos",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.pos); });
+        labeled_row(cx, "Size",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.room_size); });
+        labeled_row(cx, "Damp",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.damping); });
+        labeled_row(cx, "Width", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.width); });
+        labeled_row(cx, "Mix",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.reverb.mix); });
     });
 }
 
@@ -817,31 +816,11 @@ const DIST_TYPE_LABELS: &[&str] = &["Soft", "Hard", "Fuzz", "Warm"];
 
 fn distortion_section(cx: &mut Context) {
     section_container(cx, "DISTORTION", "accent-dst", |cx| {
-        labeled_row(cx, "On",    |cx| { ParamSlider::new(cx, AppData::params, |p| &p.distortion.enabled); });
+        labeled_row(cx, "Pos",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.distortion.pos); });
         labeled_row(cx, "Type",  |cx| { RadioGroup::new(cx, AppData::params, |p| &p.distortion.dist_type, DIST_TYPE_LABELS); });
         labeled_row(cx, "Drive", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.distortion.drive); });
         labeled_row(cx, "Tone",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.distortion.tone); });
         labeled_row(cx, "Mix",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.distortion.mix); });
-    });
-}
-
-fn fx_order_section(cx: &mut Context) {
-    section_container(cx, "FX CHAIN ORDER (1 = first)", "accent-ord", |cx| {
-        HStack::new(cx, |cx| {
-            VStack::new(cx, |cx| {
-                labeled_row(cx, "Chorus",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.fx_order.chorus); });
-                labeled_row(cx, "Delay",   |cx| { ParamSlider::new(cx, AppData::params, |p| &p.fx_order.delay); });
-                labeled_row(cx, "Shimmer", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.fx_order.shimmer); });
-            })
-            .width(Stretch(1.0));
-            VStack::new(cx, |cx| {
-                labeled_row(cx, "Gapper",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.fx_order.gapper); });
-                labeled_row(cx, "Reverb",  |cx| { ParamSlider::new(cx, AppData::params, |p| &p.fx_order.reverb); });
-                labeled_row(cx, "Distort", |cx| { ParamSlider::new(cx, AppData::params, |p| &p.fx_order.distortion); });
-            })
-            .width(Stretch(1.0));
-        })
-        .col_between(Pixels(6.0));
     });
 }
 
@@ -925,3 +904,4 @@ impl View for RadioGroup {
         });
     }
 }
+

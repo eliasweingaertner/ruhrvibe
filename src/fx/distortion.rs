@@ -22,9 +22,9 @@ impl Distortion {
         tone: f32,
         mix: f32,
     ) -> (f32, f32) {
-        // Partial gain compensation: louder drive → slightly louder output,
-        // but not by the full factor so the effect is audibly felt.
-        let comp = 1.0 / drive.max(1.0).sqrt();
+        // Partial gain compensation: 0.25-power so high drive stays loud and brutal.
+        // (0.5-power was too quiet at extreme settings.)
+        let comp = 1.0 / drive.max(1.0).powf(0.25);
         let shaped_l = Self::shape(in_l * drive, dist_type) * comp;
         let shaped_r = Self::shape(in_r * drive, dist_type) * comp;
 
@@ -44,8 +44,8 @@ impl Distortion {
             DistType::Soft => x.tanh(),
             // Hard brick-wall clip.
             DistType::Hard => x.clamp(-1.0, 1.0),
-            // Heavier fuzz: double tanh for extra harmonic density.
-            DistType::Fuzz => (x * 2.0).tanh() * 0.8,
+            // Savage fuzz: triple tanh cascade for maximum harmonic density.
+            DistType::Fuzz => (x * 4.0).tanh().tanh() * 0.75,
             // Algebraic soft clip — gentle, tube-like.
             DistType::Warm => x / (1.0 + x.abs()),
         }

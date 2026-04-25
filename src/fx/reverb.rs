@@ -95,8 +95,11 @@ impl Reverb {
         width: f32,
         mix: f32,
     ) -> (f32, f32) {
-        let feedback = 0.28 + room_size * 0.7;
-        let damp1    = damping * 0.4;
+        // Wider range: 0→very short (0.05), 1→near-infinite (0.995).
+        // Capped at 0.995 to avoid unbounded growth.
+        let feedback = (0.05 + room_size * 0.945).min(0.995);
+        // Wider damping range: 0→fully bright, 1→very dark.
+        let damp1    = damping * 0.85;
         let damp2    = 1.0 - damp1;
         let input    = (in_l + in_r) * 0.015;
 

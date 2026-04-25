@@ -382,8 +382,8 @@ pub struct ChorusFxParams {
     pub depth: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
-    #[id = "on"]
-    pub enabled: BoolParam,
+    #[id = "pos"]
+    pub pos: IntParam,
 }
 
 impl ChorusFxParams {
@@ -401,7 +401,7 @@ impl ChorusFxParams {
             .with_smoother(SmoothingStyle::Logarithmic(20.0))
             .with_unit(" Hz")
             .with_value_to_string(Arc::new(|v| format!("{:.2} Hz", v))),
-            depth: FloatParam::new("Depth", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
+            depth: FloatParam::new("Depth", 0.5, FloatRange::Linear { min: 0.0, max: 2.5 })
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -409,7 +409,9 @@ impl ChorusFxParams {
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
-            enabled: BoolParam::new("Enabled", false),
+            pos: IntParam::new("Pos", 0, IntRange::Linear { min: 0, max: 6 })
+                .with_value_to_string(Arc::new(|v| if v == 0 { "Off".to_string() } else { v.to_string() }))
+                .with_string_to_value(Arc::new(|s| if s.eq_ignore_ascii_case("off") { Some(0) } else { s.parse().ok() })),
         }
     }
 }
@@ -425,8 +427,8 @@ pub struct DelayFxParams {
     pub tone: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
-    #[id = "on"]
-    pub enabled: BoolParam,
+    #[id = "pos"]
+    pub pos: IntParam,
 }
 
 impl DelayFxParams {
@@ -464,7 +466,9 @@ impl DelayFxParams {
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
-            enabled: BoolParam::new("Enabled", false),
+            pos: IntParam::new("Pos", 0, IntRange::Linear { min: 0, max: 6 })
+                .with_value_to_string(Arc::new(|v| if v == 0 { "Off".to_string() } else { v.to_string() }))
+                .with_string_to_value(Arc::new(|s| if s.eq_ignore_ascii_case("off") { Some(0) } else { s.parse().ok() })),
         }
     }
 }
@@ -695,8 +699,8 @@ pub struct GapperFxParams {
     pub smooth: FloatParam,
     #[id = "depth"]
     pub depth: FloatParam,
-    #[id = "on"]
-    pub enabled: BoolParam,
+    #[id = "pos"]
+    pub pos: IntParam,
 }
 
 impl GapperFxParams {
@@ -723,7 +727,9 @@ impl GapperFxParams {
             .with_smoother(SmoothingStyle::Linear(20.0))
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
-            enabled: BoolParam::new("Enabled", false),
+            pos: IntParam::new("Pos", 0, IntRange::Linear { min: 0, max: 6 })
+                .with_value_to_string(Arc::new(|v| if v == 0 { "Off".to_string() } else { v.to_string() }))
+                .with_string_to_value(Arc::new(|s| if s.eq_ignore_ascii_case("off") { Some(0) } else { s.parse().ok() })),
         }
     }
 }
@@ -737,8 +743,8 @@ pub struct ShimmerFxParams {
     pub feedback: FloatParam,
     #[id = "mix"]
     pub mix: FloatParam,
-    #[id = "on"]
-    pub enabled: BoolParam,
+    #[id = "pos"]
+    pub pos: IntParam,
 }
 
 impl ShimmerFxParams {
@@ -768,7 +774,9 @@ impl ShimmerFxParams {
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
-            enabled: BoolParam::new("Enabled", false),
+            pos: IntParam::new("Pos", 0, IntRange::Linear { min: 0, max: 6 })
+                .with_value_to_string(Arc::new(|v| if v == 0 { "Off".to_string() } else { v.to_string() }))
+                .with_string_to_value(Arc::new(|s| if s.eq_ignore_ascii_case("off") { Some(0) } else { s.parse().ok() })),
         }
     }
 }
@@ -776,7 +784,7 @@ impl ShimmerFxParams {
 /// Parameters for the plate reverb.
 #[derive(Params)]
 pub struct ReverbFxParams {
-    #[id = "on"]   pub enabled:   BoolParam,
+    #[id = "pos"]  pub pos:       IntParam,
     #[id = "size"] pub room_size: FloatParam,
     #[id = "damp"] pub damping:   FloatParam,
     #[id = "wid"]  pub width:     FloatParam,
@@ -786,7 +794,9 @@ pub struct ReverbFxParams {
 impl ReverbFxParams {
     fn new() -> Self {
         Self {
-            enabled:   BoolParam::new("Enabled", false),
+            pos:       IntParam::new("Pos", 0, IntRange::Linear { min: 0, max: 6 })
+                .with_value_to_string(Arc::new(|v| if v == 0 { "Off".to_string() } else { v.to_string() }))
+                .with_string_to_value(Arc::new(|s| if s.eq_ignore_ascii_case("off") { Some(0) } else { s.parse().ok() })),
             room_size: FloatParam::new("Size", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
@@ -810,7 +820,7 @@ impl ReverbFxParams {
 /// Parameters for the waveshaping distortion.
 #[derive(Params)]
 pub struct DistortionFxParams {
-    #[id = "on"]   pub enabled:   BoolParam,
+    #[id = "pos"]  pub pos:       IntParam,
     #[id = "drv"]  pub drive:     FloatParam,
     #[id = "type"] pub dist_type: EnumParam<DistType>,
     #[id = "tone"] pub tone:      FloatParam,
@@ -820,9 +830,11 @@ pub struct DistortionFxParams {
 impl DistortionFxParams {
     fn new() -> Self {
         Self {
-            enabled:   BoolParam::new("Enabled", false),
+            pos:       IntParam::new("Pos", 0, IntRange::Linear { min: 0, max: 6 })
+                .with_value_to_string(Arc::new(|v| if v == 0 { "Off".to_string() } else { v.to_string() }))
+                .with_string_to_value(Arc::new(|s| if s.eq_ignore_ascii_case("off") { Some(0) } else { s.parse().ok() })),
             drive:     FloatParam::new("Drive", 2.0,
-                FloatRange::Skewed { min: 1.0, max: 20.0, factor: FloatRange::skew_factor(-1.5) })
+                FloatRange::Skewed { min: 1.0, max: 100.0, factor: FloatRange::skew_factor(-2.0) })
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(Arc::new(|v| format!("{:.1}x", v))),
             dist_type: EnumParam::new("Type", DistType::Soft),
@@ -834,32 +846,6 @@ impl DistortionFxParams {
                 .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
-        }
-    }
-}
-
-/// Per-effect position in the FX chain (1 = first, 6 = last).
-/// The synth sorts effects by this value before processing each block.
-#[derive(Params)]
-pub struct FxOrderParams {
-    #[id = "chr"] pub chorus:      IntParam,
-    #[id = "dly"] pub delay:       IntParam,
-    #[id = "shm"] pub shimmer:     IntParam,
-    #[id = "gap"] pub gapper:      IntParam,
-    #[id = "rev"] pub reverb:      IntParam,
-    #[id = "dst"] pub distortion:  IntParam,
-}
-
-impl FxOrderParams {
-    fn new() -> Self {
-        let pos = |name, default| IntParam::new(name, default, IntRange::Linear { min: 1, max: 6 });
-        Self {
-            chorus:     pos("Chorus pos",     1),
-            delay:      pos("Delay pos",      2),
-            shimmer:    pos("Shimmer pos",    3),
-            gapper:     pos("Gapper pos",     4),
-            reverb:     pos("Reverb pos",     5),
-            distortion: pos("Distortion pos", 6),
         }
     }
 }
@@ -916,9 +902,6 @@ pub struct SynthParams {
     #[nested(id_prefix = "dist", group = "Distortion")]
     pub distortion: Arc<DistortionFxParams>,
 
-    #[nested(id_prefix = "fxord", group = "FX Order")]
-    pub fx_order: Arc<FxOrderParams>,
-
     #[id = "master_gain"]
     pub master_gain: FloatParam,
 
@@ -945,7 +928,6 @@ impl Default for SynthParams {
             arp: Arc::new(ArpParams::new()),
             reverb: Arc::new(ReverbFxParams::new()),
             distortion: Arc::new(DistortionFxParams::new()),
-            fx_order: Arc::new(FxOrderParams::new()),
             master_gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(-6.0),

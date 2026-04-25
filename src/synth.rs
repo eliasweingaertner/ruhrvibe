@@ -320,26 +320,37 @@ impl Plugin for SubtractiveSynth {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let max_voices = (self.params.num_voices.value() as usize).min(MAX_VOICES);
-        let chorus_enabled     = self.params.chorus.enabled.value();
-        let delay_enabled      = self.params.delay.enabled.value();
-        let shimmer_enabled    = self.params.shimmer.enabled.value();
-        let gapper_enabled     = self.params.gapper.enabled.value();
-        let reverb_enabled     = self.params.reverb.enabled.value();
-        let distortion_enabled = self.params.distortion.enabled.value();
+        let chorus_enabled     = self.params.chorus.pos.value()     > 0;
+        let delay_enabled      = self.params.delay.pos.value()      > 0;
+        let shimmer_enabled    = self.params.shimmer.pos.value()    > 0;
+        let gapper_enabled     = self.params.gapper.pos.value()     > 0;
+        let reverb_enabled     = self.params.reverb.pos.value()     > 0;
+        let distortion_enabled = self.params.distortion.pos.value() > 0;
         let fx_active = chorus_enabled || delay_enabled || shimmer_enabled
             || gapper_enabled || reverb_enabled || distortion_enabled;
 
-        // Build sorted FX order once per DAW buffer. Each entry is (position, fx_index).
-        // fx_index: 0=chorus, 1=delay, 2=shimmer, 3=gapper, 4=reverb, 5=distortion
-        let mut sorted_fx: [(i32, u8); 6] = [
-            (self.params.fx_order.chorus.value(),     0),
-            (self.params.fx_order.delay.value(),      1),
-            (self.params.fx_order.shimmer.value(),    2),
-            (self.params.fx_order.gapper.value(),     3),
-            (self.params.fx_order.reverb.value(),     4),
-            (self.params.fx_order.distortion.value(), 5),
+        // Build ordered FX list once per DAW buffer.
+        // Each entry: (chain position, fx_id, name for tiebreak).
+        // fx_id: 0=Chorus, 1=Delay, 2=Shimmer, 3=Gapper, 4=Reverb, 5=Distortion
+        // Position 0 means Off — excluded. Equal positions → lexicographic name order.
+        let mut raw_fx = [
+            (self.params.chorus.pos.value(),     0u8, "Chorus"),
+            (self.params.delay.pos.value(),      1u8, "Delay"),
+            (self.params.shimmer.pos.value(),    2u8, "Shimmer"),
+            (self.params.gapper.pos.value(),     3u8, "Gapper"),
+            (self.params.reverb.pos.value(),     4u8, "Reverb"),
+            (self.params.distortion.pos.value(), 5u8, "Distortion"),
         ];
-        sorted_fx.sort_unstable_by_key(|&(pos, _)| pos);
+        raw_fx.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.2.cmp(b.2)));
+        let mut sorted_fx_arr = [0u8; 6];
+        let mut n_fx = 0usize;
+        for &(pos, id, _) in &raw_fx {
+            if pos > 0 {
+                sorted_fx_arr[n_fx] = id;
+                n_fx += 1;
+            }
+        }
+        let sorted_fx = &sorted_fx_arr[..n_fx];
 
         // Transport info captured once — stable across the whole DAW buffer.
         let transport = context.transport();
@@ -538,7 +549,7 @@ impl Plugin for SubtractiveSynth {
 
                 for i in 0..block_len {
                     let (mut l, mut r) = (mix_l[i], mix_r[i]);
-                    for &(_, fx_id) in &sorted_fx {
+                    for &fx_id in sorted_fx {
                         match fx_id {
                             0 if chorus_enabled => {
                                 (l, r) = self.chorus.process(l, r, ch_rate, ch_depth, ch_mix);
